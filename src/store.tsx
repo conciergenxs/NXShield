@@ -1,38 +1,38 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Activity, Actor, AppNotification, Asset, AssetStatus, Attachment, Availability, Category, Client, ClientUser, DeliveryRecord, Department, NotificationEventType, NotificationRule, Permission, Severity, SlaPolicy, SlaTarget, TeamMember, Ticket, TicketChannel, TicketStatus, AssetCategory, AssetMonitor } from './types';
+import type { Activity, Actor, AppNotification, Asset, AssetStatus, Attachment, Availability, Category, Client, ClientUser, DeliveryRecord, Department, FullRcaContent, NotificationEventType, NotificationRule, Permission, Severity, SlaPolicy, SlaTarget, TeamMember, Ticket, TicketChannel, TicketStatus, AssetCategory, AssetMonitor, SlaExclusionKind, TicketPlan } from './types';
 import * as seed from './data/seed';
+import { useAuth } from './auth';
 import { buildInitialTickets } from './data/tickets';
-import { NEEDS_ASSIGNEE, SEVERITY_LABEL, priorityLabel, STATUS_LABEL, canTransition, hasPermission, isOpen, moveLabel, needsMoveNote, portalStatus } from './lib/domain';
+import { CATEGORY_LABEL, NEEDS_ASSIGNEE, SEVERITY_LABEL, priorityLabel, STATUS_LABEL, canTransition, hasPermission, isOpen, moveLabel, needsMoveNote, portalStatus, SLA_EXCLUSION_LABEL, TASK_TYPE_LABEL } from './lib/domain';
 import { fmtDuration } from './lib/format';
+import { autoPlan, taskTypeFor } from './lib/plan';
+import { analyze, fullRcaDraftOf, problemOf, responseDraftOf } from './lib/rcaAi';
+import { routeTo, guessAsset, guessCategory, guessSeverity, testerFor } from './lib/intake';
 import { PROGRESS_EVERY_MINS, PROGRESS_STAGES, progressUpdate, stepUpdate } from './lib/assist';
 
 const MIN_MS = 60_000;
 import { dispatch, type NotifyContext } from './lib/notifications';
 import { getSla, type SlaState, type TicketSla } from './lib/sla';
 
+/** NXS logging a ticket for a client: which client, which of their PICs reported it, and what happened. The AI fills in the rest. */
 export interface NewTicketInput {
   clientId: string;
-  assetId: string;
   reporterId: string;
   /** Where the client reported the issue. Tickets logged here never come from the portal. */
   channel: Exclude<TicketChannel, 'portal'>;
   title: string;
   description: string;
-  category: Category;
-  /** From the impact questions; null for categories without a priority. */
-  severity: Severity | null;
   attachments: Attachment[];
 }
 
+
 /** A ticket a client user submits themselves in the Client Portal. */
+/** A client raising a ticket: just what happened. The AI fills in the asset, the category, the priority and who works on it. */
 export interface PortalTicketInput {
   clientId: string;
-  assetId: string;
   reporterId: string;
   title: string;
   description: string;
-  category: Category;
-  severity: Severity | null;
   attachments: Attachment[];
 }
 
@@ -52,7 +52,7 @@ export type Dialog =
   | { type: 'block'; ticketId: string }
   | { type: 'move-note'; ticketId: string; to: TicketStatus }
   | { type: 'request-approval'; ticketId: string }
-  | { type: 'start-work'; ticketId: string }
+  | { type: 'sla-exclusion'; ticketId: string }
   | { type: 'unblock'; ticketId: string }
   | { type: 'assign'; ticketId: string; then?: TicketStatus }
   | { type: 'add-client' }
@@ -120,16 +120,44 @@ interface Store {
    *  linear path needs a `reason` (rework, reopen, blocker, resolve without
    *  approval, cancel); without one the matching dialog opens. Sending for
    *  approval needs a `handoff`: a note to the client, with optional files. */
-  changeStatus: (id: string, to: TicketStatus, opts?: { reason?: string; handoff?: { note: string; attachments: Attachment[] }; diagnosis?: { issue: string; fix: string } }) => boolean;
+  changeStatus: (id: string, to: TicketStatus, opts?: { reason?: string; handoff?: { note: string; attachments: Attachment[] } }) => boolean;
+  /** Save the initial RCA (the likely cause and the plan; for P1 also when it will be fixed). The client sees it. */
+  saveInitialRca: (id: string, rca: { problem?: string; issue: string; fix: string; fixBy?: number }) => void;
+  /** Keep the team's edits to the AI's initial RCA draft, before it is shared. */
+  saveRcaDraft: (id: string, draft: { problem?: string; issue: string; fix: string; hours?: number }) => void;
+  /** Record a question to the RCA assistant and its answer. */
+  addRcaExchange: (id: string, exchange: { question: string; answer: string; apply?: { issue?: string; fix?: string } }) => void;
+  /** Keep the team's edit of the AI's initial response. */
+  saveResponseDraft: (id: string, text: string) => void;
+  /** Send the initial response to the client (the team's edit, or the AI's). It is the first response. */
+  sendInitialResponse: (id: string) => void;
+  /** Keep the team's edit of the full RCA (by hand or by asking the AI). Null goes back to the AI's draft. */
+  saveFullRcaDraft: (id: string, content: FullRcaContent | null) => void;
+  /** The AI's drafts, as they read now: the initial response, and what the full RCA document covers. */
+  responseDraftFor: (t: Ticket) => string;
+  fullRcaDraftFor: (t: Ticket) => FullRcaContent;
+  /** Post a comment. NXS staff post as themselves; `by` is set for a client user posting from the portal. */
+  addComment: (id: string, thread: 'client' | 'internal', text: string, by?: Actor) => void;
   /** When the signed-in client last opened their notifications, per client. */
   portalSeenAt: Record<string, number>;
   markPortalSeen: (clientId: string) => void;
-  assignTicket: (id: string, memberId: string | null, then?: TicketStatus) => void;
+  /** Hand a ticket to someone. Admins and leads can; so can whoever holds it now, or its QA. A note goes to the internal comments. */
+  assignTicket: (id: string, memberId: string | null, then?: TicketStatus, note?: string) => void;
+  /** Change the QA who checks and tests it. */
+  setTester: (id: string, memberId: string) => void;
+  setCategory: (id: string, category: Category) => void;
+  setAsset: (id: string, assetId: string) => void;
+  /** QA confirms the AI's read of a new ticket: the initial RCA goes to the client, and the work goes to the assignee. */
+  confirmTriage: (id: string) => void;
   setSeverity: (id: string, severity: Severity) => void;
+  /** Mark a ticket outside the SLA for one of its exclusions, or count it again with null. */
+  setSlaExclusion: (id: string, exclusion: { kind: SlaExclusionKind; note: string } | null) => void;
+  /** Change the team's planning on a ticket: sprint, task type, story points, expected day. Undefined clears a field. */
+  planTicket: (id: string, patch: Partial<TicketPlan>) => void;
 
   /* Client Portal: actions taken by a client user, recorded as theirs. */
   submitPortalTicket: (input: PortalTicketInput) => Ticket;
-  /** The client's answer to a fix waiting for approval: approving resolves it, declining reopens it. */
+  /** The client's answer to a fix ready to deploy: approving resolves it, declining sends it back to Not started. */
   reviewFix: (ticketId: string, userId: string, decision: 'approved' | 'declined', note: string, attachments?: Attachment[]) => boolean;
 
   setAssetStatus: (id: string, status: AssetStatus) => void;
@@ -222,9 +250,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [team, setTeam] = useState(seed.team);
   const [policies, setPolicies] = useState(seed.policies);
   const [portalSeenAt, setPortalSeenAt] = useState<Record<string, number>>({});
-  const markPortalSeen = useCallback((clientId: string) => setPortalSeenAt((m) => ({ ...m, [clientId]: Date.now() })), []);
+  const markPortalSeen = useCallback((clientId: string) => setPortalSeenAt((m) => ({ ...m, [clientId]: seed.clock() })), []);
   const [notificationRules, setNotificationRules] = useState(seed.notificationRules);
-  const [initialFeed] = useState(() => seedNotifications(tickets, Date.now()));
+  const [initialFeed] = useState(() => seedNotifications(tickets, seed.clock()));
   const [notifications, setNotifications] = useState(initialFeed.notifications);
   const [deliveries, setDeliveries] = useState(initialFeed.deliveries);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -235,7 +263,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const live = useRef({ tickets, clients, assets, team, policies, notificationRules });
   live.current = { tickets, clients, assets, team, policies, notificationRules };
 
-  const currentUser = team.find((m) => m.id === seed.CURRENT_USER_ID)!;
+  // Whoever signed in with their work email; anyone else opens as the default PIC.
+  const { session } = useAuth('team');
+  const currentUser = team.find((m) => m.email === session?.email) ?? team.find((m) => m.id === seed.CURRENT_USER_ID)!;
   const me: Actor = useMemo(() => ({ type: 'team', id: currentUser.id }), [currentUser.id]);
   const can = useCallback((p: Permission) => hasPermission(currentUser.role, p), [currentUser.role]);
 
@@ -284,7 +314,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // badge only counts things that happened without them (such as SLA changes).
   const emit = useCallback((type: NotificationEventType, ticket: Ticket, detail?: string, unread = false, internalOnly = false) => {
     const { clients, team, notificationRules } = live.current;
-    const out = dispatch(type, ticket, { clients, team, rules: notificationRules }, Date.now(), detail, !unread, internalOnly);
+    const out = dispatch(type, ticket, { clients, team, rules: notificationRules }, seed.clock(), detail, !unread, internalOnly);
     setNotifications((n) => [out.notification, ...n].slice(0, 60));
     if (out.deliveries.length) setDeliveries((d) => [...out.deliveries, ...d].slice(0, 200));
   }, []);
@@ -348,6 +378,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /* ---------- Ticket actions ---------- */
 
+  const responseDraftFor = useCallback<Store['responseDraftFor']>((t) => {
+    const { assets, clients, policies } = live.current;
+    const asset = assets.find((a) => a.id === t.assetId);
+    const reporter = clients.find((c) => c.id === t.clientId)?.users.find((u) => u.id === t.reporterId);
+    const sla = getSla(t, policyFor(clients, policies, t.clientId), seed.clock());
+    return t.responseDraft ?? responseDraftOf(t, asset?.name ?? 'your asset', reporter?.name.split(' ')[0] ?? 'there', sla.initialRca.due);
+  }, []);
+
+  const fullRcaDraftFor = useCallback<Store['fullRcaDraftFor']>((t) => {
+    const { assets, clients } = live.current;
+    const client = clients.find((c) => c.id === t.clientId);
+    const reporter = client?.users.find((u) => u.id === t.reporterId);
+    if (t.fullRcaDraft) return t.fullRcaDraft;
+    return fullRcaDraftOf(t, { asset: assets.find((a) => a.id === t.assetId), clientName: client?.name ?? 'the client', reporterName: reporter?.name ?? 'the client' });
+  }, []);
+
   const changeStatus = useCallback<Store['changeStatus']>(
     (id, to, opts) => {
       const t = current(id);
@@ -371,13 +417,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setDialog({ type: 'resolve', ticketId: id });
         return false;
       }
-      // Starting work says what is wrong and how it will be fixed; the client sees it.
-      if (t.status === 'new' && to === 'in_progress' && !(opts?.diagnosis?.issue.trim() && opts.diagnosis.fix.trim())) {
-        setDialog({ type: 'start-work', ticketId: id });
-        return false;
-      }
-      // The client gets the fix with a note on what changed and how to check it.
-      if (to === 'waiting_approval' && !opts?.handoff?.note.trim()) {
+      // Testing passed: the client gets a note, from the RCA and the test, to approve it going live.
+      if (to === 'ready_to_deploy' && !opts?.handoff?.attachments.length) {
         setDialog({ type: 'request-approval', ticketId: id });
         return false;
       }
@@ -396,15 +437,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return false;
         }
       }
-      const at = Date.now();
+      const at = seed.clock();
       const next: Ticket = { ...t, status: to, updatedAt: at };
+      // Out of New, from anywhere (the button, the menu, the board): QA confirms the AI's read,
+      // and the initial RCA as QA left it goes to the client.
+      const confirming = t.status === 'new' && to === 'in_progress';
       const moved = `Status changed from ${STATUS_LABEL[t.status]} to ${STATUS_LABEL[to]}`;
       // Blocked and testing are NXS's own steps inside "In progress": moving
       // between them stays internal, so the client never sees or hears of it.
       const internal = portalStatus(t.status) === portalStatus(to);
       let entry: Activity;
       const extra: Activity[] = [];
-      // Leaving Blocker clears the active blocker; entering it logs a new one.
+      // Leaving Blocked clears the active blocker; entering it logs a new one.
       if (t.status === 'blocked') {
         const open = t.blockers[t.blockers.length - 1];
         if (open && open.clearedAt == null) {
@@ -416,15 +460,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         next.blockers = [...next.blockers, { id: `blk-${at}`, details: opts!.reason!.trim(), by: me, at, clearedAt: null, clearedBy: null, clearNote: '' }];
         extra.push(activity(at + 1, me, 'blocker', `Blocker: ${opts!.reason!.trim()}`, 'internal'));
       }
-      if (t.status === 'new' && to === 'in_progress') {
-        const { issue, fix } = opts!.diagnosis!;
-        next.diagnosis = { issue: issue.trim(), fix: fix.trim(), by: me, at };
-        extra.push(activity(at + 1, me, 'diagnosis', `What we found: ${issue.trim()} How we’ll fix it: ${fix.trim()}`));
-      }
-      if (to === 'waiting_approval') {
+      if (to === 'ready_to_deploy') {
         const { note, attachments } = opts!.handoff!;
         next.handoffs = [...t.handoffs, { id: `hof-${at}`, note: note.trim(), attachments, by: me, at }];
-        extra.push(activity(at + 1, me, 'handoff', note.trim()));
+        extra.push(activity(at + 1, me, 'handoff', note.trim() || 'Sent the fix to the client to deploy'));
+      }
+      if (confirming) {
+        const asset = live.current.assets.find((a) => a.id === t.assetId);
+        const dev = live.current.team.find((m) => m.id === t.assigneeId);
+        const draft = t.diagnosis ?? t.rcaDraft ?? analyze(t, asset?.name ?? 'the asset', live.current.tickets);
+        // The fix time follows the SLA for the priority, so nothing extra is set here.
+        const problem = t.rcaDraft?.problem ?? problemOf(t, asset?.name ?? 'the asset');
+        // P1's fix time is set in its initial RCA; P2 and P3 follow the SLA.
+        const fixBy = t.severity === 'critical' && t.rcaDraft?.hours ? t.createdAt + t.rcaDraft.hours * seed.HOUR : undefined;
+        if (!t.diagnosis) next.diagnosis = { problem, issue: draft.issue, fix: draft.fix, fixBy, by: me, at };
+        if (t.triage) next.triage = { ...t.triage, confirmedAt: at, confirmedBy: me };
+        extra.push(activity(at + 1, me, 'assignment', `Confirmed the AI's suggestions and assigned it to ${dev?.name ?? 'the team'}`, 'internal'));
+        if (!t.diagnosis) extra.push(activity(at + 2, me, 'diagnosis', `The issue: ${problem} What we found: ${draft.issue} How we’ll fix it: ${draft.fix}`));
       }
       // The reason for rework or a reopen stays with NXS, even when the move itself is visible.
       if (needsMoveNote(t.status, to)) {
@@ -441,7 +493,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         next.cancellation = { by: me, reason, at };
         entry = activity(at, me, 'cancellation', `Canceled. Reason: ${reason}`);
       } else {
-        if (to === 'reopened') {
+        if (to === 'in_progress' && (t.status === 'resolved' || t.status === 'canceled')) {
           next.resolvedAt = null;
           next.canceledAt = null;
           next.cancellation = null;
@@ -464,14 +516,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const assignTicket = useCallback<Store['assignTicket']>(
-    (id, memberId, then) => {
+    (id, memberId, then, note) => {
       const t = current(id);
       if (!t) return;
-      if (!can('ticket.assign')) {
+      // Whoever holds the ticket can hand it on (it may not be their kind of work), and so can its QA.
+      const holds = t.assigneeId === currentUser.id || t.testerId === currentUser.id;
+      if (!can('ticket.assign') && !holds) {
         toast('You do not have permission to assign tickets.', { tone: 'error' });
         return;
       }
-      const at = Date.now();
+      const at = seed.clock();
       const { team } = live.current;
       const member = team.find((m) => m.id === memberId);
       const previous = team.find((m) => m.id === t.assigneeId);
@@ -484,24 +538,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const entries: Activity[] = [];
       // Changing hands doesn't start the work; starting it is its own step.
       const next: Ticket = { ...t, assigneeId: member.id, updatedAt: at };
-      const dept = departments.find((d) => d.id === member.departmentId)?.name ?? '';
-      entries.push(
-        activity(at, me, 'assignment', previous ? `Reassigned from ${previous.name} to ${member.name} (${member.level}, ${dept})` : `Assigned to ${member.name} (${member.level}, ${dept})`, 'internal'),
-      );
+      entries.push(activity(at, me, 'assignment', previous ? `Reassigned from ${previous.name} to ${member.name}` : `Assigned to ${member.name}`, 'internal'));
       next.activity = [...t.activity, ...entries];
+      // The why lives in the internal comments, where the team already talks about the ticket.
+      if (note?.trim()) next.comments = [...t.comments, { id: `cmt-${at}`, thread: 'internal', by: me, at, text: note.trim() }];
       commit(next);
       emit('ticket_assigned', next);
       toast(`${t.id} assigned to ${member.name}`, { link: { to: `/tickets/${t.id}`, label: 'View' } });
       if (then && then !== next.status) changeStatus(id, then);
     },
-    [can, changeStatus, commit, departments, emit, me, toast],
+    [can, changeStatus, commit, currentUser.id, emit, me, toast],
   );
 
   const setSeverity = useCallback<Store['setSeverity']>(
     (id, severity) => {
       const t = current(id);
       if (!t || t.severity === severity) return;
-      const at = Date.now();
+      const at = seed.clock();
       commit({
         ...t,
         severity,
@@ -513,51 +566,250 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [commit, me, toast],
   );
 
+  const setTester = useCallback<Store['setTester']>(
+    (id, memberId) => {
+      const t = current(id);
+      const member = live.current.team.find((m) => m.id === memberId);
+      if (!t || !member || t.testerId === memberId) return;
+      const at = seed.clock();
+      const previous = live.current.team.find((m) => m.id === t.testerId);
+      commit({ ...t, testerId: memberId, updatedAt: at, activity: [...t.activity, activity(at, me, 'assignment', previous ? `Tester changed from ${previous.name} to ${member.name}` : `${member.name} will test it`, 'internal')] });
+      toast(`${member.name} tests ${t.id}`);
+    },
+    [commit, me, toast],
+  );
 
-  /** The NXS member plotted on an asset: new tickets for it go straight to them. */
-  const ownerOf = (assetId: string) => {
-    const { assets, team } = live.current;
-    const asset = assets.find((x) => x.id === assetId);
-    return team.find((m) => m.id === asset?.ownerId);
+  const setCategory = useCallback<Store['setCategory']>(
+    (id, category) => {
+      const t = current(id);
+      if (!t || t.category === category) return;
+      const at = seed.clock();
+      commit({ ...t, category, updatedAt: at, activity: [...t.activity, activity(at, me, 'severity', `Category changed from ${CATEGORY_LABEL[t.category].replace(' issue', '')} to ${CATEGORY_LABEL[category].replace(' issue', '')}`, 'internal')] });
+    },
+    [commit, me],
+  );
+
+  const setAsset = useCallback<Store['setAsset']>(
+    (id, assetId) => {
+      const t = current(id);
+      const asset = live.current.assets.find((a) => a.id === assetId);
+      if (!t || !asset || t.assetId === assetId) return;
+      const at = seed.clock();
+      const before = live.current.assets.find((a) => a.id === t.assetId);
+      commit({ ...t, assetId, updatedAt: at, activity: [...t.activity, activity(at, me, 'severity', `Asset changed from ${before?.name ?? 'none'} to ${asset.name}`, 'internal')] });
+    },
+    [commit, me],
+  );
+
+  const confirmTriage = useCallback<Store['confirmTriage']>((id) => void changeStatus(id, 'in_progress'), [changeStatus]);
+
+  const setSlaExclusion = useCallback<Store['setSlaExclusion']>(
+    (id, exclusion) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      commit({
+        ...t,
+        slaExclusion: exclusion ? { ...exclusion, note: exclusion.note.trim(), by: me, at } : undefined,
+        updatedAt: at,
+        activity: [
+          ...t.activity,
+          activity(at, me, 'exclusion', exclusion ? `Marked outside the SLA: ${SLA_EXCLUSION_LABEL[exclusion.kind]}. ${exclusion.note.trim()}` : 'Counted against the SLA again', 'internal'),
+        ],
+      });
+      toast(exclusion ? `${t.id} is outside the SLA` : `${t.id} counts against the SLA again`);
+    },
+    [commit, me, toast],
+  );
+
+
+  const saveInitialRca = useCallback<Store['saveInitialRca']>(
+    (id, rca) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      const first = !t.diagnosis;
+      commit({
+        ...t,
+        diagnosis: { problem: rca.problem?.trim() ?? t.diagnosis?.problem, issue: rca.issue.trim(), fix: rca.fix.trim(), fixBy: rca.fixBy, by: me, at },
+        updatedAt: at,
+        activity: [...t.activity, activity(at, me, 'rca', first ? 'Shared the initial RCA' : 'Updated the initial RCA')],
+      });
+      toast(first ? `Initial RCA shared on ${t.id}` : `Initial RCA updated on ${t.id}`);
+    },
+    [commit, me, toast],
+  );
+
+  const saveRcaDraft = useCallback<Store['saveRcaDraft']>(
+    (id, draft) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      commit({ ...t, rcaDraft: { problem: draft.problem?.trim() ?? t.rcaDraft?.problem, issue: draft.issue.trim(), fix: draft.fix.trim(), hours: draft.hours ?? t.rcaDraft?.hours, at } });
+    },
+    [commit],
+  );
+
+  const addRcaExchange = useCallback<Store['addRcaExchange']>(
+    (id, x) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      commit({ ...t, rcaChat: [...(t.rcaChat ?? []), { id: `ai-${at}`, ...x, by: me, at }] });
+    },
+    [commit, me],
+  );
+
+  const saveFullRcaDraft = useCallback<Store['saveFullRcaDraft']>(
+    (id, content) => {
+      const t = current(id);
+      if (t) commit({ ...t, fullRcaDraft: content ?? undefined });
+    },
+    [commit],
+  );
+
+  const saveResponseDraft = useCallback<Store['saveResponseDraft']>(
+    (id, text) => {
+      const t = current(id);
+      if (t) commit({ ...t, responseDraft: text.trim() });
+    },
+    [commit],
+  );
+
+  const sendInitialResponse = useCallback<Store['sendInitialResponse']>(
+    (id) => {
+      const t = current(id);
+      if (!t || t.initialResponse) return;
+      const at = seed.clock();
+      const text = responseDraftFor(t);
+      const next: Ticket = {
+        ...t,
+        initialResponse: { text, by: me, at },
+        firstRespondedAt: t.firstRespondedAt ?? at,
+        updatedAt: at,
+        activity: [...t.activity, activity(at, me, 'response', text)],
+      };
+      commit(next);
+      emit('progress_update', next, 'Initial response sent');
+      toast(`Initial response sent on ${t.id}`);
+    },
+    [commit, emit, me, responseDraftFor, toast],
+  );
+
+  const addComment = useCallback<Store['addComment']>(
+    (id, thread, text, by) => {
+      const t = current(id);
+      if (!t || !text.trim()) return;
+      const at = seed.clock();
+      const author = by ?? me;
+      const body = text.trim();
+      const excerpt = body.length > 140 ? `${body.slice(0, 137)}…` : body;
+      const { team, clients } = live.current;
+      const authorId = author.type === 'system' ? '' : author.id;
+      const authorName = author.type === 'team' ? team.find((m) => m.id === authorId)?.name ?? 'Someone' : clients.flatMap((c) => c.users).find((u) => u.id === authorId)?.name ?? 'The client';
+      // Every comment is part of the ticket's history; an internal one stays internal.
+      const logged = activity(at, author, 'comment', `${thread === 'internal' ? 'Internal note' : 'Comment'}: “${excerpt}”`, thread === 'internal' ? 'internal' : 'client');
+      commit({ ...t, comments: [...t.comments, { id: `cmt-${at}`, thread, by: author, at, text: body }], activity: [...t.activity, logged], updatedAt: at });
+      // Whoever is @mentioned hears about it: the team on internal notes, the client's people on the client thread.
+      const people = thread === 'internal' ? team.map((m) => ({ id: m.id, name: m.name })) : (clients.find((c) => c.id === t.clientId)?.users ?? []).map((u) => ({ id: u.id, name: u.name }));
+      const mentioned = people.filter((p) => body.includes(`@${p.name}`) && p.id !== authorId);
+      if (mentioned.length) {
+        const mine = author.type === 'team' && author.id === currentUser.id;
+        setNotifications((n) => [
+          ...mentioned.map((p, i) => ({
+            id: `ntf-mention-${at}-${i}`,
+            type: 'mention' as const,
+            ticketId: t.id,
+            title: p.id === currentUser.id ? `${authorName} mentioned you on ${t.id}` : `${mine ? 'You' : authorName} mentioned ${p.name} on ${t.id}`,
+            body: excerpt,
+            at,
+            // Your own mentions are logged as read; being mentioned by someone else is new.
+            read: mine || p.id !== currentUser.id,
+          })),
+          ...n,
+        ].slice(0, 60));
+      }
+    },
+    [commit, me, currentUser.id],
+  );
+
+  const planTicket = useCallback<Store['planTicket']>(
+    (id, patch) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      const before = t.plan ?? {};
+      const lines: string[] = [];
+      if ('sprint' in patch && patch.sprint !== before.sprint) lines.push(before.sprint ? `Sprint plan changed from ${before.sprint} to ${patch.sprint ?? 'none'}` : `Sprint plan set to ${patch.sprint}`);
+      if ('taskType' in patch && patch.taskType !== before.taskType)
+        lines.push(before.taskType ? `Task type changed from ${TASK_TYPE_LABEL[before.taskType]} to ${patch.taskType ? TASK_TYPE_LABEL[patch.taskType] : 'none'}` : `Task type set to ${patch.taskType ? TASK_TYPE_LABEL[patch.taskType] : 'none'}`);
+      if ('storyPoints' in patch && patch.storyPoints !== before.storyPoints) lines.push(before.storyPoints != null ? `Story points changed from ${before.storyPoints} to ${patch.storyPoints ?? 'none'}` : `Story points set to ${patch.storyPoints}`);
+      const logged = lines.map((text, i) => activity(at + i, me, 'severity', text, 'internal'));
+      commit({ ...t, plan: { ...t.plan, ...patch }, updatedAt: at, activity: [...t.activity, ...logged] });
+    },
+    [commit, me],
+  );
+
+  /** The AI's read of a new ticket: the asset it is about, its category and priority, and who should work on it. */
+  const openCount = (id: string) => live.current.tickets.filter((t) => t.assigneeId === id && isOpen(t)).length;
+  const triageFor = (clientId: string, title: string, description: string) => {
+    const { assets } = live.current;
+    const asset = guessAsset(`${title} ${description}`, assets.filter((a) => a.clientId === clientId));
+    const category = guessCategory(title, description);
+    const severity = guessSeverity(title, description);
+    // A business issue goes to whichever business PIC has fewer open tickets.
+    const pick = category === 'business' ? (openCount('tm-adra') < openCount('tm-bhisma') ? 1 : 0) : 0;
+    return { assetId: asset?.id ?? '', category, severity, assigneeId: routeTo(category, taskTypeFor(title, description, category), pick) };
   };
-  const assignedOnCreate = (assetId: string, at: number): Activity[] => {
-    const m = ownerOf(assetId);
-    if (!m) return [];
-    const dept = departments.find((d) => d.id === m.departmentId)?.name ?? '';
-    return [activity(at + 1, { type: 'system' }, 'assignment', `Assigned to ${m.name} (${m.level}, ${dept}), who handles this asset`, 'internal')];
+
+  /** A new ticket, as the AI first reads it: everything filled in, waiting for QA to check it. */
+  const newTicket = (id: string, input: { clientId: string; reporterId: string; title: string; description: string; attachments: Attachment[] }, source: Ticket['source'], created: Activity, at: number): Ticket => {
+    const { team } = live.current;
+    const triage = triageFor(input.clientId, input.title, input.description);
+    const dev = team.find((m) => m.id === triage.assigneeId);
+    const qa = team.find((m) => m.id === testerFor());
+    const ticket: Ticket = {
+      id,
+      title: input.title.trim(),
+      description: input.description.trim(),
+      clientId: input.clientId,
+      assetId: triage.assetId,
+      category: triage.category,
+      reporterId: input.reporterId,
+      source,
+      createdAt: at,
+      updatedAt: at,
+      status: 'new',
+      severity: triage.severity,
+      assigneeId: triage.assigneeId,
+      testerId: testerFor(),
+      triage,
+      firstRespondedAt: null,
+      resolvedAt: null,
+      canceledAt: null,
+      cancellation: null,
+      feedback: [],
+      blockers: [],
+      moveNotes: [],
+      handoffs: [],
+      attachments: input.attachments,
+      comments: [],
+      activity: [
+        created,
+        activity(at + 1, { type: 'system' }, 'assignment', `AI suggested ${SEVERITY_LABEL[triage.severity]}, ${CATEGORY_LABEL[triage.category].replace(' issue', '')}, assigned to ${dev?.name ?? 'the team'}. Waiting for ${qa?.name ?? 'QA'} to confirm.`, 'internal'),
+      ],
+    };
+    ticket.plan = autoPlan(ticket);
+    return ticket;
   };
 
   const createTicket = useCallback<Store['createTicket']>(
     (input) => {
       const { tickets } = live.current;
-      const at = Date.now();
+      const at = seed.clock();
       const max = tickets.reduce((m, t) => Math.max(m, Number(t.id.slice(4))), 4000);
       const reporterName = live.current.clients.find((c) => c.id === input.clientId)?.users.find((u) => u.id === input.reporterId)?.name ?? 'the client';
-      const ticket: Ticket = {
-        id: `NXS-${max + 1}`,
-        title: input.title.trim(),
-        description: input.description.trim(),
-        clientId: input.clientId,
-        assetId: input.assetId,
-        category: input.category,
-        reporterId: input.reporterId,
-        source: { channel: input.channel, loggedBy: currentUser.id },
-        createdAt: at,
-        updatedAt: at,
-        status: 'new',
-        severity: input.severity,
-        assigneeId: ownerOf(input.assetId)?.id ?? null,
-        firstRespondedAt: null,
-        resolvedAt: null,
-        canceledAt: null,
-        cancellation: null,
-        feedback: [],
-        blockers: [],
-        moveNotes: [],
-        handoffs: [],
-        attachments: input.attachments,
-        activity: [activity(at, me, 'created', `Logged by NXS on behalf of ${reporterName}`), ...assignedOnCreate(input.assetId, at)],
-      };
+      const ticket = newTicket(`NXS-${max + 1}`, input, { channel: input.channel, loggedBy: currentUser.id }, activity(at, me, 'created', `Logged by NXS on behalf of ${reporterName}`), at);
       const list = [...tickets, ticket];
       live.current.tickets = list;
       setTickets(list);
@@ -574,33 +826,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const submitPortalTicket = useCallback<Store['submitPortalTicket']>(
     (input) => {
-      const at = Date.now();
+      const at = seed.clock();
       const by: Actor = { type: 'client', id: input.reporterId };
-      const ticket: Ticket = {
-        id: nextTicketId(),
-        title: input.title.trim(),
-        description: input.description.trim(),
-        clientId: input.clientId,
-        assetId: input.assetId,
-        category: input.category,
-        reporterId: input.reporterId,
-        source: { channel: 'portal', loggedBy: null },
-        createdAt: at,
-        updatedAt: at,
-        status: 'new',
-        severity: input.severity,
-        assigneeId: ownerOf(input.assetId)?.id ?? null,
-        firstRespondedAt: null,
-        resolvedAt: null,
-        canceledAt: null,
-        cancellation: null,
-        feedback: [],
-        blockers: [],
-        moveNotes: [],
-        handoffs: [],
-        attachments: input.attachments,
-        activity: [activity(at, by, 'created', 'Submitted from the Client Portal'), ...assignedOnCreate(input.assetId, at)],
-      };
+      const ticket = newTicket(nextTicketId(), input, { channel: 'portal', loggedBy: null }, activity(at, by, 'created', 'Submitted from the Client Portal'), at);
       const list = [...live.current.tickets, ticket];
       live.current.tickets = list;
       setTickets(list);
@@ -616,10 +844,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const t = current(ticketId);
       // Anyone signed in for the ticket's brand answers (one account per brand for now), only while it is in review.
       const sameClient = live.current.clients.find((c) => c.id === t?.clientId)?.users.some((u) => u.id === userId);
-      if (!t || t.status !== 'waiting_approval' || !sameClient) return false;
+      if (!t || t.status !== 'ready_to_deploy' || !sameClient) return false;
       if (decision === 'declined' && !note.trim()) return false;
-      const at = Date.now();
+      const at = seed.clock();
       const by: Actor = { type: 'client', id: userId };
+      const clientName = live.current.clients.flatMap((c) => c.users).find((u) => u.id === userId)?.name ?? 'the client';
       const feedback = { id: `fb-n${at.toString(36)}`, at, by: userId, decision, note: note.trim(), attachments };
       const next: Ticket =
         decision === 'approved'
@@ -629,15 +858,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               resolvedAt: at,
               updatedAt: at,
               feedback: [...t.feedback, feedback],
-              activity: [...t.activity, activity(at, by, 'resolution', 'Approved the fix in the Client Portal. Status changed from Waiting for approval to Resolved')],
+              activity: [...t.activity, activity(at, by, 'resolution', `Deployed by ${clientName}. Status changed from Ready to deploy to Resolved`)],
             }
           : {
               ...t,
-              status: 'reopened',
+              status: 'in_progress',
               resolvedAt: null,
               updatedAt: at,
               feedback: [...t.feedback, feedback],
-              activity: [...t.activity, activity(at, by, 'status', 'Declined the fix. Status changed from Waiting for approval to Reopened')],
+              activity: [...t.activity, activity(at, by, 'status', 'Declined the fix. Status changed from Ready to deploy to In progress')],
             };
       commit(next);
       emit(decision === 'approved' ? 'ticket_resolved' : 'status_updated', next, decision === 'declined' ? note.trim() : undefined, true);
@@ -650,7 +879,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   /* ---------- Clients, assets, SLA, team ---------- */
 
   const setAssetStatus = useCallback<Store['setAssetStatus']>((id, status) => {
-    setAssets((list) => list.map((a) => (a.id === id ? { ...a, status, statusChangedAt: Date.now(), statusNote: status === a.status ? a.statusNote : '' } : a)));
+    setAssets((list) => list.map((a) => (a.id === id ? { ...a, status, statusChangedAt: seed.clock(), statusNote: status === a.status ? a.statusNote : '' } : a)));
   }, []);
   const addClient = useCallback<Store['addClient']>(
     (input) => {
@@ -677,7 +906,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         contact: { name: '', title: '', email: '', phone: '' },
         slaPolicyId: (policies.find((p) => p.isDefault) ?? policies[0]).id,
         accountManagerId: currentUser.id,
-        since: new Date().toISOString().slice(0, 10),
+        since: new Date(seed.clock()).toISOString().slice(0, 10),
         users: [],
       };
       setClients((list) => [...list, client]);
@@ -686,7 +915,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [currentUser.id],
   );
   const addClientUser = useCallback<Store['addClientUser']>((clientId, input) => {
-    const user: ClientUser = { id: `cu-${clientId}-${Date.now().toString(36)}`, clientId, role: 'client_user', ...input };
+    const user: ClientUser = { id: `cu-${clientId}-${seed.clock().toString(36)}`, clientId, role: 'client_user', ...input };
     setClients((list) => list.map((c) => (c.id === clientId ? { ...c, users: [...c.users, user] } : c)));
     return user;
   }, []);
@@ -701,7 +930,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...input,
       status: 'unknown',
       statusNote: 'Waiting for the first check.',
-      statusChangedAt: Date.now(),
+      statusChangedAt: seed.clock(),
       uptime30d: null,
     };
     setAssets((list) => [...list, asset]);
@@ -729,7 +958,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const { tickets, clients, team, notificationRules } = live.current;
       const sample = [...tickets].reverse().find((t) => isOpen(t) && t.assigneeId) ?? tickets[tickets.length - 1];
       const rules = notificationRules.map((r) => (r.event === event ? { ...r, enabled: true } : r));
-      const out = dispatch(event, sample, { clients, team, rules }, Date.now(), event.startsWith('sla') ? 'Test message' : undefined);
+      const out = dispatch(event, sample, { clients, team, rules }, seed.clock(), event.startsWith('sla') ? 'Test message' : undefined);
       setDeliveries((d) => [...out.deliveries, ...d]);
       toast(out.deliveries.length ? `Test logged for ${out.deliveries.length} recipient${out.deliveries.length > 1 ? 's' : ''}` : 'Choose at least one recipient first', {
         tone: out.deliveries.length ? 'default' : 'error',
@@ -767,7 +996,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createTicket,
     changeStatus,
     assignTicket,
+    setTester,
+    setCategory,
+    setAsset,
+    confirmTriage,
     setSeverity,
+    setSlaExclusion,
+    planTicket,
+    saveInitialRca,
+    saveRcaDraft,
+    addRcaExchange,
+    saveResponseDraft,
+    sendInitialResponse,
+    responseDraftFor,
+    fullRcaDraftFor,
+    saveFullRcaDraft,
+    addComment,
     submitPortalTicket,
     reviewFix,
     setAssetStatus,

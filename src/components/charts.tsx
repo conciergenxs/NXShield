@@ -9,8 +9,8 @@ export const CHART = {
   progress: '#FF00C6',
   created: '#0E39FC',
   open: '#C11FFF',
-  grid: '#EFEDF4',
-  track: '#F1EEF5',
+  grid: 'var(--chart-grid)',
+  track: 'var(--chart-track)',
 };
 
 function useWidth<T extends HTMLElement>() {
@@ -79,7 +79,7 @@ export function Sparkline({ points, label, height = 92 }: { points: { label: str
           ))}
           <path d={smoothPath(pts)} fill="none" stroke={CHART.open} strokeWidth={2.25} strokeLinecap="round" />
           <circle cx={pts[active][0]} cy={pts[active][1]} r={9} fill={CHART.open} opacity={0.14} />
-          <circle cx={pts[active][0]} cy={pts[active][1]} r={4.5} fill={CHART.open} stroke="#fff" strokeWidth={2} />
+          <circle cx={pts[active][0]} cy={pts[active][1]} r={4.5} fill={CHART.open} strokeWidth={2} style={{ stroke: 'var(--surface)' }} />
           {points.map((p, i) => (
             <text key={i} x={x(i)} y={height + 16} textAnchor="middle" className={cx('chart-tick', i === active && 'is-active')}>
               {p.label}

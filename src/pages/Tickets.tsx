@@ -2,9 +2,10 @@ import { useMemo, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Boxes, Building2, CalendarDays, CircleDot, Clock, Download, LayoutList, Plus, Search, Send, Signal, SquareKanban, Tag, Timer, User, X } from 'lucide-react';
 import type { Category, Severity, Ticket, TicketStatus } from '../types';
-import { CATEGORIES, CATEGORY_LABEL, CHANNEL_LABEL, PORTAL_STATUSES, SEVERITIES, SEVERITY_LABEL, STATUSES, STATUS_LABEL, isOpen, portalStatus, severityRank, NO_PRIORITY_LABEL, priorityLabel } from '../lib/domain';
-import { downloadCsv, fmtDateTime, fromDateInput, startOfDay, toDateInput } from '../lib/format';
+import { CATEGORIES, CATEGORY_LABEL, CHANNEL_LABEL, PORTAL_STATUSES, SEVERITIES, SEVERITY_LABEL, STATUSES, STATUS_LABEL, isOpen, portalStatus, severityRank, NO_PRIORITY_LABEL, TASK_TYPE_LABEL, priorityLabel } from '../lib/domain';
+import { downloadCsv, fmtDateTime, fmtDateYear, fromDateInput, startOfDay, toDateInput } from '../lib/format';
 import { SLA_STATE_LABEL } from '../lib/sla';
+import { expectedDone } from '../lib/plan';
 import { useStore } from '../store';
 import { TicketGroups, type TicketColumn, type TicketSort } from '../components/TicketTable';
 import { Button, Card, PageHeader, cx, type Option } from '../components/ui';
@@ -130,7 +131,7 @@ export function useTicketFilters() {
 }
 
 export function Tickets() {
-  const { clients, assets: allAssets, team, now, slaOf, clientOf, assetOf, memberOf } = useStore();
+  const { clients, assets: allAssets, team, now, slaOf, clientOf, assetOf, memberOf, reporterOf } = useStore();
   const { portal, clientId } = useTicketScope();
   const tickets = useScopedTickets();
   const assets = useMemo(() => (clientId ? allAssets.filter((a) => a.clientId === clientId) : allAssets), [allAssets, clientId]);
@@ -205,11 +206,12 @@ export function Tickets() {
         if (oa !== ob) return oa ? -1 : 1;
         return slaOf(a).active.remainingMs - slaOf(b).active.remainingMs;
       },
+      reporter: (a, b) => text(reporterOf(a)?.name ?? 'zzz', reporterOf(b)?.name ?? 'zzz'),
       created: (a, b) => a.createdAt - b.createdAt,
     };
     const fn = cmp[sort.key] ?? cmp.created;
     return [...filtered].sort((a, b) => fn(a, b) * dir || b.createdAt - a.createdAt);
-  }, [filtered, sort.key, sort.dir, clientOf, assetOf, memberOf, slaOf]);
+  }, [filtered, sort.key, sort.dir, clientOf, assetOf, memberOf, reporterOf, slaOf]);
 
   const activeCount = [...params.keys()].filter((k) => !['sort', 'dir', 'page', 'size'].includes(k)).length;
 
@@ -325,7 +327,7 @@ export function Tickets() {
 
   const exportCsv = () =>
     downloadCsv('nxshield-tickets.csv', [
-      ['Ticket ID', 'Issue title', 'Client', 'Asset', 'Category', 'Priority', 'Status', 'Assigned to', 'SLA', 'Created', 'Source'],
+      ['Ticket ID', 'Issue title', 'Client', 'Asset', 'Category', 'Priority', 'Status', 'Assigned to', 'SLA', 'Reported by', 'Created', 'Source', ...(portal ? [] : ['Sprint plan', 'Task type', 'Story points', 'Expected done'])],
       ...sorted.map((t) => [
         t.id,
         t.title,
@@ -336,8 +338,11 @@ export function Tickets() {
         STATUS_LABEL[t.status],
         memberOf(t.assigneeId)?.name ?? 'Unassigned',
         SLA_STATE_LABEL[slaOf(t).overall],
+        reporterOf(t)?.name ?? '',
         fmtDateTime(t.createdAt),
         CHANNEL_LABEL[t.source.channel],
+        // Planning is NXS's own; a client's export leaves it out.
+        ...(portal ? [] : [t.plan?.sprint ?? '', t.plan?.taskType ? TASK_TYPE_LABEL[t.plan.taskType] : '', t.plan?.storyPoints?.toString() ?? '', fmtDateYear(expectedDone(t, slaOf(t)).at)]),
       ]),
     ]);
 

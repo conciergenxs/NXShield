@@ -1,10 +1,12 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Trash2, Upload } from 'lucide-react';
+import { Building2, Trash2, Upload, User } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
 import { useStore } from '../store';
-import { Avatar, Button, Card, Field } from '../components/ui';
+import { Avatar, Button, Card, Field, cx } from '../components/ui';
+import { Workspace } from './Workspace';
 
-/* Settings for the signed-in person: who they are and their password.
-   Nothing here changes how tickets work. */
+/* Settings: Account is the signed-in person (profile and password);
+   Workspace is the clients NXS serves, their assets and portal users. */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -184,12 +186,30 @@ function PasswordSection() {
 }
 
 export function Settings() {
+  const { pathname } = useLocation();
+  const workspace = pathname.startsWith('/settings/workspace');
+  const tabs = [
+    { to: '/settings', label: 'Account', icon: User, active: !workspace },
+    { to: '/settings/workspace', label: 'Workspace', icon: Building2, active: workspace },
+  ];
   return (
-    <div className="page settings-page">
-      <Card className="settings-card">
-        <ProfileSection />
-        <PasswordSection />
-      </Card>
+    <div className={cx('page settings-page', workspace && 'is-workspace')}>
+      <nav className="view-tabs settings-tabs" aria-label="Settings">
+        {tabs.map(({ to, label, icon: Icon, active }) => (
+          <Link key={to} to={to} className={cx('view-tab', active && 'is-active')} aria-current={active ? 'page' : undefined}>
+            <Icon size={15} aria-hidden />
+            {label}
+          </Link>
+        ))}
+      </nav>
+      {workspace ? (
+        <Workspace />
+      ) : (
+        <Card className="settings-card">
+          <ProfileSection />
+          <PasswordSection />
+        </Card>
+      )}
     </div>
   );
 }

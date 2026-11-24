@@ -2,17 +2,19 @@
 // Everything that belongs to a client carries a clientId so the same data can
 // later be scoped per organization for the Client Portal.
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low';
-export type Category = 'tech' | 'business' | 'operational' | 'hardware';
+/** P1 Critical, P2 Medium, P3 Low, as in the SLA. */
+export type Severity = 'critical' | 'medium' | 'low';
+/** Tech includes hardware: a device or network fault that stops someone using an asset. */
+export type Category = 'tech' | 'business' | 'operational';
 
 export type TicketStatus =
   | 'new'
-  | 'reopened'
+  | 'not_started'
   | 'in_progress'
   | 'blocked'
   | 'waiting_testing'
   | 'on_testing'
-  | 'waiting_approval'
+  | 'ready_to_deploy'
   | 'resolved'
   | 'canceled';
 
@@ -110,7 +112,10 @@ export interface TeamMember {
 }
 
 export interface SlaTarget {
+  /** Initial response: the first reply to the client (T+1). */
   firstResponseMins: number;
+  /** Initial RCA: the issue, its cause and the fix plan (T+3). */
+  rcaMins: number;
   resolutionMins: number;
 }
 
@@ -138,7 +143,11 @@ export type ActivityKind =
   | 'reason'
   | 'handoff'
   | 'diagnosis'
-  | 'progress';
+  | 'progress'
+  | 'exclusion'
+  | 'rca'
+  | 'response'
+  | 'comment';
 
 export interface Activity {
   id: string;
@@ -152,10 +161,25 @@ export interface Activity {
   visibility: 'client' | 'internal';
 }
 
-/** What NXS found and how it will fix it, shared with the client when work starts. */
+/** The SLA's exclusions: when a ticket does not count against it. */
+export type SlaExclusionKind = 'third_party' | 'client_side' | 'force_majeure' | 'maintenance' | 'change_request';
+
+export interface SlaExclusion {
+  kind: SlaExclusionKind;
+  note: string;
+  by: Actor;
+  at: number;
+}
+
+/** The initial RCA: the likely cause and the plan, shared with the client. Due 3 hours after the ticket comes in. */
 export interface Diagnosis {
+  /** The problem in plain words, as the client is told it. */
+  problem?: string;
+  /** The cause. */
   issue: string;
   fix: string;
+  /** When the fix is expected. For P1 this sets the fix deadline. */
+  fixBy?: number;
   by: Actor;
   at: number;
 }
@@ -169,7 +193,7 @@ export interface Attachment {
   url?: string;
 }
 
-/** Sent to the client with a fix for approval: what changed, how to check it, and proof. */
+/** Sent to the client when the fix is ready to deploy: the full RCA document(s), with an optional note. */
 export interface Handoff {
   id: string;
   note: string;
@@ -266,10 +290,14 @@ export interface Ticket {
   createdAt: number;
   updatedAt: number;
   status: TicketStatus;
-  /** Priority P1 to P4, set by the impact questions. Only Tech issues have
-   *  one; null for Operational and Hardware. Drives the SLA targets. */
+  /** Priority P1 to P3, set by the two impact questions for every category.
+   *  Null only on older tickets logged without one. Drives the SLA targets. */
   severity: Severity | null;
   assigneeId: string | null;
+  /** The QA who checks the ticket when it comes in and tests the fix later. */
+  testerId: string | null;
+  /** What the AI set when the ticket came in, and when QA confirmed it. Internal. */
+  triage?: TicketTriage;
   firstRespondedAt: number | null;
   resolvedAt: number | null;
   canceledAt: number | null;
@@ -282,12 +310,126 @@ export interface Ticket {
   moveNotes: MoveNote[];
   /** Set when work starts: what is wrong and how NXS will fix it. */
   diagnosis?: Diagnosis;
-  /** What NXS sent the client with each request for approval, newest last. */
+  /** Marked outside the SLA, for one of the SLA's exclusions. Its clocks stop counting. */
+  slaExclusion?: SlaExclusion;
+  /** What NXS sent the client each time a fix was ready to deploy, newest last. */
   handoffs: Handoff[];
   attachments: Attachment[];
   activity: Activity[];
   /** Set for requests raised in the Client Portal. */
   request?: TicketRequest;
+  /** How NXS plans the work. Internal: never shown in the Client Portal. */
+  plan?: TicketPlan;
+  /** The initial response, as sent. Sending it is the first response. */
+  initialResponse?: InitialResponse;
+  /** The team's edit of the AI's initial response before it goes out. Internal. */
+  responseDraft?: string;
+  /** The team's edit of the AI's full RCA, kept until it goes out with the fix. Internal until sent. */
+  fullRcaDraft?: FullRcaContent;
+  /** Comments, in two threads: with the client (they see it in the portal) and internal. */
+  comments: Comment[];
+  /** The team's edits to the AI's initial RCA before it is shared. Internal. */
+  rcaDraft?: { problem?: string; issue: string; fix: string; hours?: number; at: number };
+  /** Questions the team asked the AI about the RCA, and its answers. Internal. */
+  rcaChat?: RcaExchange[];
+}
+
+export interface RcaExchange {
+  id: string;
+  question: string;
+  answer: string;
+  /** Text the answer suggests for the initial RCA. */
+  apply?: { issue?: string; fix?: string };
+  by: Actor;
+  at: number;
+}
+
+/** The full RCA: what really caused it, what was changed, and how it is kept from happening again. */
+/** One line of a full RCA table: a label and its value. */
+export type RcaRow = [string, string];
+
+export interface RcaAction {
+  action: string;
+  type: 'Corrective' | 'Preventive' | 'Detective' | 'Process';
+  owner: string;
+  due: string;
+  status: 'Open' | 'In progress' | 'Done';
+}
+
+/**
+ * A full RCA, laid out as NXS's RCA report template: the header, then ten
+ * sections. The AI drafts every part from the ticket; QA checks it and sends
+ * it as a document with the fix. Names follow the dashboard's (ticket ID,
+ * priority, asset); NXS staff appear by role, never by name.
+ */
+export interface FullRcaContent {
+  header: RcaRow[];
+  /** 1. Executive summary: what happened, impact, cause, current status, key prevention step. */
+  summary: RcaRow[];
+  /** 2. Incident details. */
+  details: RcaRow[];
+  /** 3. Timeline of events: time, event, who. */
+  timeline: [string, string, string][];
+  /** 4. Symptoms and evidence. */
+  evidence: RcaRow[];
+  /** 5. Root cause analysis. */
+  method: string;
+  whys: [string, string, string][];
+  rootCause: string;
+  factors: RcaRow[];
+  wentWell: string;
+  didntGoWell: string;
+  /** 6. Resolution. */
+  resolution: RcaRow[];
+  steps: string[];
+  /** 7. Corrective and preventive actions. */
+  actions: RcaAction[];
+  /** 8. Lessons learned. */
+  lessons: string[];
+  /** 9. Recurrence risk. */
+  risk: RcaRow[];
+  /** 10. Sign-off: role, name, date. */
+  signoff: [string, string, string][];
+}
+
+/** The first reply to the client: they know it arrived, how it is rated and what comes next. */
+export interface InitialResponse {
+  text: string;
+  by: Actor;
+  at: number;
+}
+
+export interface Comment {
+  id: string;
+  /** 'client' is shared with the client in the portal; 'internal' never leaves NXS. */
+  thread: 'client' | 'internal';
+  by: Actor;
+  at: number;
+  text: string;
+}
+
+/** The AI's first read of a new ticket. QA checks it; anything still equal to it reads as set by AI until confirmed. */
+export interface TicketTriage {
+  assetId: string;
+  category: Category;
+  severity: Severity;
+  assigneeId: string;
+  confirmedAt?: number;
+  confirmedBy?: Actor;
+}
+
+/** The kind of work a ticket needs, as the team splits it. */
+export type TaskType = 'frontend' | 'backend';
+
+/** NXS's own planning on a ticket, set by the team and edited in place. */
+export interface TicketPlan {
+  /** The weekly sprint it is planned in, e.g. "SP.26.11.19" (the sprint's first day). */
+  sprint?: string;
+  taskType?: TaskType;
+  /** The estimate in story points, one point for one hour of work. */
+  storyPoints?: number;
+  /** The day the team expects to finish it, as the start of that day. */
+  expectedBy?: number;
 }
 
 export type NotificationEventType =
@@ -298,7 +440,8 @@ export type NotificationEventType =
   | 'sla_breached'
   | 'ticket_resolved'
   | 'ticket_canceled'
-  | 'progress_update';
+  | 'progress_update'
+  | 'mention';
 
 export type RecipientKind = 'assignee' | 'support_lead' | 'account_manager' | 'client_contact';
 

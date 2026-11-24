@@ -32,14 +32,18 @@ export function BackHeader({ title, description, fallback, backLabel, actions }:
 }
 
 /** One fact in a detail page's side column: a small label with its icon, above a one-line value. */
-export function Prop({ icon: Icon, label, title, children }: { icon: LucideIcon; label: string; title?: string; children: ReactNode }) {
+/** One property: icon and label, then the value. `stack` lets the value run to
+ *  more than one line, for a value with a note or an action under it. */
+export function Prop({ icon: Icon, label, title, stack, className, children }: { icon: LucideIcon; label: string; title?: string; stack?: boolean; className?: string; children: ReactNode }) {
   return (
-    <div className="prop">
+    <div className={className ? `prop ${className}` : 'prop'}>
       <dt>
         <Icon size={14} aria-hidden />
         {label}
       </dt>
-      <dd title={title}>{children}</dd>
+      <dd title={title} className={stack ? 'is-stack' : undefined}>
+        {children}
+      </dd>
     </div>
   );
 }
@@ -133,7 +137,13 @@ export function Attachments({ files }: { files: Attachment[] }) {
             return (
               <li key={f.id} className="attachment">
                 <Icon size={18} aria-hidden />
-                <span className="truncate">{f.name}</span>
+                {f.url ? (
+                  <a className="truncate attachment-link" href={f.url} download={f.name}>
+                    {f.name}
+                  </a>
+                ) : (
+                  <span className="truncate">{f.name}</span>
+                )}
                 <span className="muted">{f.size}</span>
               </li>
             );

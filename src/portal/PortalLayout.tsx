@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Ban, Bell, ChevronDown, CircleCheck, Flag, Hammer, LogOut, Search, type LucideIcon } from 'lucide-react';
+import { Ban, Bell, ChevronDown, CircleCheck, Flag, Hammer, LogOut, MessageSquare, Search, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../auth';
 import { ROLE_LABEL, clientVisibleActivity } from '../lib/domain';
 import { fmtRelative } from '../lib/format';
@@ -8,6 +8,7 @@ import { useStore } from '../store';
 import type { Activity, Ticket } from '../types';
 import { ClientLogo } from '../components/domain';
 import { Toasts } from '../components/Layout';
+import { ThemeSwitch } from '../components/ThemeSwitch';
 import { Avatar, cx, usePopover } from '../components/ui';
 import { TicketScopeContext, portalScope } from '../components/scope';
 import { portalText, usePortalUser } from './shared';
@@ -20,7 +21,7 @@ function PortalBrand() {
   return (
     <Link to="/portal" className="brand" aria-label="Client Portal home">
       <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
-        <rect width="32" height="32" rx="9" fill="#fff" fillOpacity="0.14" />
+        <rect width="32" height="32" rx="9" fill="#c11fff" />
         <path d="M16 6.5l8 3v6.2c0 4.6-3.2 8.2-8 9.8-4.8-1.6-8-5.2-8-9.8V9.5z" fill="none" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
         <path d="M12.5 15.8l2.6 2.6 4.6-5" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -37,9 +38,12 @@ const NOTIFY: Partial<Record<Activity['kind'], { icon: LucideIcon; tone: string;
   diagnosis: { icon: Search, tone: 'pink', text: () => 'Found the problem and started the fix' },
   progress: { icon: Hammer, tone: 'pink', text: (a) => a.text },
   status: { icon: Hammer, tone: 'neutral', text: (a) => portalText(a) },
-  handoff: { icon: Flag, tone: 'yellow', text: () => 'The fix is ready for your review' },
+  handoff: { icon: Flag, tone: 'yellow', text: () => 'The fix and its full RCA are ready: deploy it' },
   resolution: { icon: CircleCheck, tone: 'purple', text: () => 'Resolved' },
   cancellation: { icon: Ban, tone: 'neutral', text: () => 'Canceled by NXS' },
+  comment: { icon: MessageSquare, tone: 'purple', text: (a) => a.text.replace(/^Comment: /, 'New comment: ') },
+  response: { icon: MessageSquare, tone: 'blue', text: () => 'We replied to your report' },
+  rca: { icon: Search, tone: 'purple', text: () => 'We updated our analysis' },
 };
 
 function PortalNotifications() {
@@ -147,6 +151,8 @@ function PortalProfile() {
             </div>
           </div>
           <div className="menu-sep" role="separator" />
+          <ThemeSwitch />
+          <div className="menu-sep" role="separator" />
           <button type="button" className="menu-item menu-item-signout" onClick={signOut}>
             <LogOut size={16} aria-hidden /> Sign out
           </button>
@@ -184,6 +190,15 @@ export function PortalLayout() {
     return () => ro.disconnect();
   }, []);
 
+  // Clear at the top of the page; blurs what scrolls under it, as on the dashboard.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 0);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   // The account was removed, or only existed before a reload: sign in again.
   useEffect(() => {
     if (!user) signOut();
@@ -193,10 +208,8 @@ export function PortalLayout() {
   return (
     <div className="shell portal-shell">
       <div className="band" aria-hidden />
-      <header className="topbar" ref={topbarRef}>
-        <div className="topbar-bg" aria-hidden>
-          <div className="band" />
-        </div>
+      <header className={cx('topbar', scrolled && 'is-scrolled')} ref={topbarRef}>
+        <div className="topbar-bg" aria-hidden />
         <div className="topbar-inner">
           <PortalBrand />
           <div className="topbar-tools">

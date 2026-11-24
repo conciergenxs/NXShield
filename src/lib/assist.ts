@@ -59,6 +59,16 @@ function cleanTitle(title: string) {
 /** Asks for something new or different rather than reporting a fault. */
 const CHANGE_WORDS = /^(add|upload|replace|update|set up|grant|deactivate|import|backfill|create|publish|remove|change|rename)\b/i;
 
+/** The kind of fault a ticket reads as, from its own words, and whether it asks for a change instead. */
+export function readTicket(t: Pick<Ticket, 'title' | 'description'>): { area?: { where: string; cause: string; fix: string }; isChange: boolean } {
+  const title = cleanTitle(t.title);
+  const text = `${title} ${t.description}`.toLowerCase();
+  const area = AREAS.find((a) => a.match.test(text));
+  const opener = firstSentence(t.description);
+  const isChange = /^please\s/i.test(opener) || CHANGE_WORDS.test(title) || /request|ready for (your )?(check|approval|review)/i.test(t.title);
+  return { area: area && { where: area.where, cause: area.cause, fix: area.change && isChange ? area.change : area.fix }, isChange };
+}
+
 /** What is wrong and how NXS will fix it, drafted from the client's brief. */
 export function draftDiagnosis(t: Pick<Ticket, 'title' | 'description'>, assetName: string): { issue: string; fix: string } {
   const title = cleanTitle(t.title);
@@ -75,16 +85,16 @@ export function draftDiagnosis(t: Pick<Ticket, 'title' | 'description'>, assetNa
     const fix = area?.change ?? `Make the change on ${assetName}, check it ourselves, then send it to you to approve.`;
     return { issue, fix };
   }
-  const summary = sentence(`${cap(title)} on ${assetName}`);
-  const issue = area ? `${summary} We traced it to ${area.where}, where ${area.cause}.` : `${summary} We’re narrowing down the cause and will share it in the next update.`;
+  // Straight to the cause: the issue itself is stated just above it.
+  const issue = area ? `We traced it to ${area.where} on ${assetName}, where ${area.cause}.` : `We’re still narrowing down the cause on ${assetName} and will share it in the next update.`;
   const fix = area?.fix ?? 'Reproduce the issue, find the change that caused it, fix it, and check the affected flow end to end.';
   return { issue, fix };
 }
 
 /* ---------- Progress updates ---------- */
 
-/** How often the client hears from NXS while work goes on, per the SLA table. P4 is reported on closure. */
-export const PROGRESS_EVERY_MINS: Record<Severity, number | null> = { critical: 60, high: 240, medium: 1440, low: null };
+/** How often the client hears from NXS while work goes on, per the SLA table. P3 is reported when it is fixed. */
+export const PROGRESS_EVERY_MINS: Record<Severity, number | null> = { critical: 60, medium: 240, low: null };
 
 /** Stages where work is moving and updates are due. Not New, not Blocker, not the client's turn. */
 export const PROGRESS_STAGES: TicketStatus[] = ['in_progress', 'waiting_testing', 'on_testing'];
@@ -106,7 +116,7 @@ export function progressUpdate(status: TicketStatus, stageSince: number, fixDue:
   const share = status === 'in_progress' ? 0.6 : status === 'waiting_testing' ? 0.7 : 0.85;
   const nextAt = stageSince + (fixDue - stageSince) * share;
   const nextIn = nextAt - at;
-  const nextName = status === 'in_progress' ? 'testing' : status === 'waiting_testing' ? 'testing starts' : 'the client for approval';
+  const nextName = status === 'in_progress' ? 'testing' : status === 'waiting_testing' ? 'testing starts' : 'deployment';
   const nextLine = nextIn > 0 ? `${status === 'waiting_testing' ? 'Testing should start' : `Expected to reach ${nextName}`} in about ${fmtDuration(nextIn)}.` : `Taking longer than planned to reach ${nextName}.`;
   const stageName = status === 'in_progress' ? 'In progress' : status === 'waiting_testing' ? 'Waiting for testing' : 'On testing';
   const staff = `${stageName} for ${elapsed}. ${nextLine} ${onTrack ? `Fix due by ${due}.` : `Fix was due ${due}.`}`;
@@ -122,9 +132,19 @@ export function progressUpdate(status: TicketStatus, stageSince: number, fixDue:
  * The portal shows these stages as "In progress", so the line explains them
  * in plain words instead. Blocker is left out on purpose: no news there.
  */
+/** How the team reads the client's step updates in the activity log: what happened, not "you". */
+const STEP_STAFF: Record<string, string> = {
+  'The fix is done. It goes through testing before it reaches you.': 'Fix done and handed over for testing. The client was told.',
+  'We’re testing the fix now. You’ll get it to check once it passes.': 'Testing started. The client was told.',
+  'Testing passed. The fix is scheduled to go live.': 'Testing passed and the fix is scheduled to go live. The client was told.',
+  'Testing found something that still needs work. We’re fixing it before it reaches you.': 'Testing found an issue, so the fix went back for more work. The client was told.',
+};
+export const stepStaffLine = (text: string): string | undefined => STEP_STAFF[text];
+
 export function stepUpdate(from: TicketStatus, to: TicketStatus): string | null {
   if (to === 'waiting_testing') return 'The fix is done. It goes through testing before it reaches you.';
   if (to === 'on_testing') return 'We’re testing the fix now. You’ll get it to check once it passes.';
-  if (to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing')) return 'Testing found something that still needs work. We’re fixing it before it reaches you.';
+  if (to === 'ready_to_deploy') return 'Testing passed. The fix is scheduled to go live.';
+  if (to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'ready_to_deploy')) return 'Testing found something that still needs work. We’re fixing it before it reaches you.';
   return null;
 }

@@ -1,76 +1,60 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useParams } from 'react-router-dom';
-import {
-  Ban,
-  Send,
-  Boxes,
-  CalendarClock,
-  CalendarDays,
-  ClipboardList,
-  CircleCheck,
-  CircleUser,
-  CircleX,
-  Flag,
-  Hammer,
-  Inbox,
-  RotateCcw,
-  Signal,
-  ThumbsUp,
-  Timer,
-  User,
-  type LucideIcon,
-  Search,
-  Wrench,
-  FileText,
-  History,
-} from 'lucide-react';
-import type { Activity, Attachment, Ticket, TicketStatus } from '../types';
-import { PORTAL_STATUS_LABEL, REQUEST_TYPE_LABEL, STATUS_LABEL, clientVisibleActivity, isOpen, portalStatus } from '../lib/domain';
-import { fmtDateTime, fmtDateYear, fmtDuration, fmtRelative } from '../lib/format';
+import { ArrowLeft, ArrowUp, Ban, Boxes, CalendarCheck, CalendarDays, CircleCheck, CircleUser, Layers, MessageSquare, Signal, X } from 'lucide-react';
+import type { Activity, Ticket, TicketStatus } from '../types';
+import { PORTAL_STATUS_LABEL, TASK_TYPE_LABEL, portalStatus } from '../lib/domain';
+import { fmtDate, fmtDateTime, fmtDuration, fmtRelative, fmtTime, fmtWeekday } from '../lib/format';
 import { useStore } from '../store';
-import { Attachments, BackHeader, Prop, RequestNotes } from '../components/detail';
-import { RichInput } from '../components/RichInput';
-import { STATUS_TONE, SeverityBadge, StatusBadge } from '../components/domain';
-import { Button, Card, Empty, cx } from '../components/ui';
-import { portalText, usePortalActorName, usePortalUser, whenText } from './shared';
+import { Prop } from '../components/detail';
+import { STATUS_ICON, STATUS_TONE, SeverityBadge } from '../components/domain';
+import { CommentBox, withMentions } from '../components/comments';
+import { Avatar, Badge, Button, Card, Empty, cx } from '../components/ui';
+import { usePortalUser } from './shared';
+import { CLIENT_STARTERS, clientAnswer } from './assistant';
+import { Timeline } from './Timeline';
 
+/*
+ * A ticket from the client's side, in the dashboard's own frame: the header,
+ * the stages, then one timeline (what comes next on top, then everything that
+ * happened, down to their report), the comments under it, and the details on
+ * the right. Everything
+ * is signed by NXS, never by a person.
+ */
 
-/* ---------- Where the ticket is, in the client's words ---------- */
+const PATH: TicketStatus[] = ['new', 'in_progress', 'ready_to_deploy', 'resolved'];
+const TASK_TONE = { frontend: 'blue', backend: 'green' } as const;
 
-const PATH: TicketStatus[] = ['new', 'in_progress', 'waiting_approval', 'resolved'];
-const STEP_ICON: Partial<Record<TicketStatus, LucideIcon>> = { new: Inbox, in_progress: Hammer, waiting_approval: Flag, resolved: CircleCheck, reopened: RotateCcw };
-
+/** When the ticket first reached each step the client sees. */
 function reachedAt(t: Ticket, step: TicketStatus): number | undefined {
   if (step === 'new') return t.createdAt;
-  const hit = [...t.activity]
-    .reverse()
-    .find((a) => a.visibility === 'client' && ((step === 'resolved' && a.kind === 'resolution') || a.text.includes(`to ${STATUS_LABEL[step]}`)));
-  return hit?.at;
+  if (step === 'in_progress') return t.firstRespondedAt ?? undefined;
+  if (step === 'ready_to_deploy') return t.handoffs[t.handoffs.length - 1]?.at;
+  if (step === 'resolved') return t.resolvedAt ?? undefined;
+  return undefined;
 }
 
-function Progress({ ticket }: { ticket: Ticket }) {
+/** The four steps the client sees, as the dashboard's stage cards. */
+function Stages({ ticket }: { ticket: Ticket }) {
   const { now } = useStore();
-  // Reopened work sits on the "In progress" step again.
-  // Blocked and testing are NXS's own steps: the client sees In progress.
-  const status = portalStatus(ticket.status);
-  const at = PATH.indexOf(status === 'reopened' ? 'in_progress' : status);
-  const done = status === 'resolved';
+  const stage = portalStatus(ticket.status);
+  if (stage === 'canceled') return null;
+  const at = PATH.indexOf(stage);
+  const done = stage === 'resolved';
   return (
-    <ol className="pipeline portal-pipeline" aria-label="Ticket progress">
+    <ol className="tdl-stages" aria-label="Ticket stages">
       {PATH.map((step, i) => {
         const state = i < at || (done && i === at) ? 'done' : i === at ? 'current' : 'todo';
-        const shown: TicketStatus = state === 'current' ? status : step;
-        const Icon = state === 'done' ? CircleCheck : STEP_ICON[shown] ?? Hammer;
-        const when = state !== 'todo' ? reachedAt(ticket, shown === 'reopened' ? 'reopened' : step) : undefined;
+        const reached = reachedAt(ticket, step);
+        const Icon = state === 'done' ? CircleCheck : STATUS_ICON[step];
+        const when = state === 'todo' ? 'Not yet' : state === 'current' ? (step === 'ready_to_deploy' ? 'Waiting for you' : reached ? `For ${fmtDuration(now - reached)}` : 'Now') : reached ? fmtDateTime(reached) : '—';
         return (
-          <li key={step} className={cx('pipeline-step', `is-${state}`, state === 'current' && `tone-${STATUS_TONE[shown]}`)} aria-current={state === 'current' ? 'step' : undefined}>
-            <span className="pipeline-name">
+          <li key={step} className={cx('tdl-stage', `is-${state}`, state === 'current' && `tone-${STATUS_TONE[step]}`)} aria-current={state === 'current' ? 'step' : undefined}>
+            <span className="tdl-stage-name">
               <Icon size={15} aria-hidden />
-              <span className="truncate">{step === 'waiting_approval' ? 'Your review' : PORTAL_STATUS_LABEL[shown]}</span>
+              <span>{PORTAL_STATUS_LABEL[step]}</span>
             </span>
-            <span className="pipeline-time" title={when ? fmtDateTime(when) : undefined}>
-              {state === 'todo' ? 'Not yet' : state === 'current' && !done ? (when && now - when >= 60_000 ? `${fmtDuration(now - when)} so far` : 'Now') : when ? fmtDateTime(when) : 'Done'}
-            </span>
+            <span className="tdl-stage-time">{when}</span>
           </li>
         );
       })}
@@ -78,224 +62,259 @@ function Progress({ ticket }: { ticket: Ticket }) {
   );
 }
 
-/* ---------- The fix: approve it, or say what's still wrong ---------- */
-
-function ReviewPanel({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const { reviewFix, assetOf, toast, now } = useStore();
-  const [declining, setDeclining] = useState(false);
-  const [note, setNote] = useState('');
-  const [files, setFiles] = useState<Attachment[]>([]);
-  const [submitted, setSubmitted] = useState(false);
-  const asset = assetOf(ticket.assetId);
-  const actorName = usePortalActorName();
-  // What NXS sent with the fix: what changed, how to check it, and proof.
-  const handoff = ticket.handoffs[ticket.handoffs.length - 1];
-  // One account per brand for now, so whoever is signed in can answer.
-
-  const error = note.trim().length < 10 ? 'Tell NXS what’s still wrong (at least 10 characters).' : '';
-  const decline = (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
-    if (error) {
-      document.getElementById('decline-note')?.focus();
-      return;
-    }
-    if (reviewFix(ticket.id, userId, 'declined', note, files)) toast(`Sent back to NXS. ${ticket.id} is open again.`);
-  };
-  const approve = () => {
-    if (reviewFix(ticket.id, userId, 'approved', '')) toast(`Thanks. ${ticket.id} is resolved.`);
-  };
-
+/** An estimate in the details: the date in the accent, a rough hour (rounded up to the
+ *  half hour) or how it went under it, the way the dashboard shows its deadline. */
+function Eta({ ts, note, tone = 'purple' }: { ts?: number; note: string; tone?: string }) {
   return (
-    <div className="portal-review-panel">
-      <div className="portal-review-panel-head">
-        <span className="portal-review-icon" aria-hidden>
-          <Flag size={18} />
-        </span>
-        <div>
-          <p className="portal-review-title">NXS has fixed this. Does it work for you?</p>
-          <p className="portal-review-text">Check {asset?.name ?? 'the asset'}, then approve the fix or tell us what’s still wrong.</p>
-        </div>
-      </div>
-      {handoff && (
-        <div className="portal-handoff">
-          <p className="portal-handoff-head">
-            Sent {whenText(handoff.at, now)} by {actorName(handoff.by)}
-          </p>
-          <p className="portal-handoff-note">{handoff.note}</p>
-          <Attachments files={handoff.attachments} />
-        </div>
-      )}
-      {declining ? (
-        <form className="portal-decline" onSubmit={decline} noValidate>
-          <label className="field-label" htmlFor="decline-note">
-            What’s still wrong?
-          </label>
-          <RichInput id="decline-note" rows={3} value={note} onChange={setNote} files={files} onFilesChange={setFiles} invalid={submitted && !!error} placeholder="The blank page still shows when I pay by bank transfer on my phone." autoFocus />
-          {submitted && error && <p className="field-error">{error}</p>}
-          <div className="portal-review-actions">
-            <Button variant="secondary" onClick={() => setDeclining(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit">
-              Send back to NXS
-            </Button>
-          </div>
-        </form>
+    <span className={cx('prop-due', `tone-${tone}`)}>
+      <span className="prop-due-main">
+        <strong>{ts ? `${fmtWeekday(ts)}, ${fmtDate(ts)}` : 'Taking a little longer'}</strong>
+      </span>
+      <span className="prop-meta">{note}</span>
+    </span>
+  );
+}
+const around = (ts: number) => `Around ${fmtTime(Math.ceil(ts / 1_800_000) * 1_800_000)}`;
+
+/** How the fix landed against its estimate, in a few words. */
+function early(at: number, due: number) {
+  const days = Math.floor((due - at) / 86_400_000);
+  if (at > due) return 'later than estimated';
+  return days >= 1 ? `${days} ${days === 1 ? 'day' : 'days'} early` : 'on time';
+}
+
+
+/* ---------- Updates and comments ---------- */
+
+function whoFor(actor: Activity['actor'], userId: string, names: Map<string, string>) {
+  if (actor.type === 'team' || actor.type === 'system') return 'NXS';
+  return actor.id === userId ? 'You' : (names.get(actor.id) ?? 'Your team');
+}
+
+function Comments({ ticket, userId }: { ticket: Ticket; userId: string }) {
+  const { addComment, clients, clientOf, now } = useStore();
+  const names = useMemo(() => new Map(clients.flatMap((c) => c.users).map((u) => [u.id, u.name])), [clients]);
+  const [text, setText] = useState('');
+  const list = ticket.comments.filter((c) => c.thread === 'client');
+  // Only the client's own people can be mentioned here.
+  const people = (clientOf(ticket.clientId)?.users ?? []).filter((u) => u.id !== userId).map((u) => ({ id: u.id, name: u.name, title: u.title }));
+  const send = () => {
+    if (!text.trim()) return;
+    addComment(ticket.id, 'client', text, { type: 'client', id: userId });
+    setText('');
+  };
+  return (
+    <div className="comments">
+      {list.length > 0 ? (
+        <ol className="comment-list">
+          {list.map((c) => {
+            const name = whoFor(c.by, userId, names);
+            return (
+              <li key={c.id} className="comment">
+                <Avatar name={name} size={28} />
+                <div className="comment-body">
+                  <p className="comment-meta">
+                    <span className="comment-name">{name}</span>
+                    <time title={fmtDateTime(c.at)}>{fmtRelative(c.at, now)}</time>
+                  </p>
+                  <p className="comment-text">{withMentions(c.text, people.map((p) => p.name))}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       ) : (
-        <div className="portal-review-actions">
-          <Button variant="secondary" icon={<CircleX size={16} />} onClick={() => setDeclining(true)}>
-            Still not fixed
-          </Button>
-          <Button variant="primary" icon={<ThumbsUp size={16} />} onClick={approve}>
-            Approve fix
-          </Button>
-        </div>
+        <p className="comments-empty">No comments yet.</p>
       )}
+      <CommentBox value={text} onChange={setText} onSend={send} people={people} label="Comment to NXS" placeholder="Write to NXS or your team… Type @ to mention someone." />
     </div>
   );
 }
 
-/* ---------- Updates: only what the client may see ---------- */
-
-const KIND_ICON: Record<Activity['kind'], LucideIcon> = {
-  created: Inbox,
-  status: RotateCcw,
-  assignment: User,
-  severity: Signal,
-  resolution: CircleCheck,
-  cancellation: Ban,
-  blocker: Hammer,
-  reason: Hammer,
-  handoff: Send,
-  diagnosis: Search,
-  progress: Hammer,
-};
-
-/** What NXS found and how it will fix it, as shared when work started. */
-function FoundCard({ ticket }: { ticket: Ticket }) {
-  const { now } = useStore();
-  const actorName = usePortalActorName();
-  const d = ticket.diagnosis!;
+/** The conversation with NXS, under the timeline. */
+function CommentsSection({ ticket, userId }: { ticket: Ticket; userId: string }) {
+  const count = ticket.comments.filter((c) => c.thread === 'client').length;
   return (
-    <section className="main-block" aria-labelledby="found-title">
-      <div className="found-card">
-        <header className="found-head">
-          <h2 id="found-title" className="block-title">
-            What we found
+    <section className="main-block pt-section" id="pt-comments" aria-labelledby="pt-comments-title">
+      <header className="rca-head">
+        <div>
+          <h2 id="pt-comments-title" className="rca-title">
+            Comments <span className="doc-tab-count">{count}</span>
           </h2>
-          <p className="found-meta">
-            {actorName(d.by)}, {whenText(d.at, now)}
-          </p>
-        </header>
-        <div className="found-row">
-          <span className="found-icon" aria-hidden>
-            <Search size={16} />
-          </span>
-          <div>
-            <p className="found-label">What’s wrong</p>
-            <p className="found-text">{d.issue}</p>
-          </div>
         </div>
-        <div className="found-row">
-          <span className="found-icon" aria-hidden>
-            <Wrench size={16} />
-          </span>
-          <div>
-            <p className="found-label">How we’ll fix it</p>
-            <p className="found-text">{d.fix}</p>
-          </div>
-        </div>
-      </div>
+      </header>
+      <Comments ticket={ticket} userId={userId} />
     </section>
   );
 }
 
-/** The client's own report, and the ticket's history, side by side as tabs. */
-function PortalTabs({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const [tab, setTab] = useState<'request' | 'activity'>('request');
-  const count = clientVisibleActivity(ticket).length;
-  const tabs = [
-    { key: 'request' as const, label: 'Your request', icon: FileText },
-    { key: 'activity' as const, label: 'Activity', icon: History, count },
-  ];
+/* ---------- Details ---------- */
+
+function PortalAside({ ticket, userId, onAsk }: { ticket: Ticket; userId: string; onAsk: () => void }) {
+  const { slaOf, assetOf, reporterOf, now } = useStore();
+  const sla = slaOf(ticket);
+  const stage = portalStatus(ticket.status);
+  const reporter = reporterOf(ticket);
+  const asset = assetOf(ticket.assetId);
+  // Until NXS confirms it, the asset and priority are only the AI's guess.
+  const confirmed = !!ticket.diagnosis;
+  // The next thing NXS owes: the reply, then the analysis, then the fix.
+  const replied = !!ticket.firstRespondedAt;
+  const clock = stage === 'new' ? (replied ? sla.initialRca : sla.firstResponse) : sla.resolution;
+  const running = (stage === 'new' || stage === 'in_progress') && clock.completedAt == null;
+  const fixedAt = ticket.handoffs[ticket.handoffs.length - 1]?.at;
+
   return (
-    <section className="main-block is-joined" aria-label="Ticket content">
-      <div className="doc-tabs" role="tablist" aria-label="Ticket content">
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          return (
-            <button key={t.key} type="button" role="tab" id={`ptab-${t.key}`} aria-selected={tab === t.key} aria-controls="portal-panel" className={cx('doc-tab', tab === t.key && 'is-active')} onClick={() => setTab(t.key)}>
-              <Icon size={16} aria-hidden />
-              {t.label}
-              {t.count != null && <span className="doc-tab-count">{t.count}</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div id="portal-panel" className="ticket-panel" role="tabpanel" aria-labelledby={`ptab-${tab}`}>
-        {tab === 'request' ? (
+    <aside className="ticket-aside pt-aside" aria-label="Ticket details">
+      {(running || fixedAt) && (
+        <dl className="props is-rows is-head">
+          {/* Like a delivery estimate: when to expect it, not a countdown. NXS keeps the clock. */}
+          {running && (
+            <Prop icon={CalendarCheck} label={stage === 'new' ? (replied ? 'Analysis expected' : 'Reply expected') : 'Estimated fix'}>
+              {clock.due >= now ? <Eta ts={clock.due} note={around(clock.due)} /> : <Eta note="We’re still on it." tone="orange" />}
+            </Prop>
+          )}
+          {!running && fixedAt && (
+            <Prop icon={CalendarCheck} label="Fixed on">
+              <Eta ts={fixedAt} note={`${early(fixedAt, sla.resolution.due).replace(/^./, (c) => c.toUpperCase())}`} />
+            </Prop>
+          )}
+        </dl>
+      )}
+      <dl className="props is-rows">
+        <Prop icon={CalendarDays} label="Created" title={fmtRelative(ticket.createdAt, now)}>
+          {fmtDateTime(ticket.createdAt)}
+        </Prop>
+        <Prop icon={CircleUser} label="Reported by">
+          {reporter ? (
+            <span className="prop-link">
+              <Avatar name={reporter.name} size={20} />
+              <span className="truncate">{reporter.id === userId ? 'You' : reporter.name}</span>
+            </span>
+          ) : (
+            '—'
+          )}
+        </Prop>
+        {/* Asset, priority and task type are set when NXS confirms the report; until then they aren't shown. */}
+        {confirmed && (
           <>
-            <p className="description">{ticket.description}</p>
-            <RequestNotes request={ticket.request} />
-            <Attachments files={ticket.attachments} />
+            <Prop icon={Boxes} label="Asset" title={asset?.name}>
+              {asset?.name ?? '—'}
+            </Prop>
+            <Prop icon={Signal} label="Priority">
+              <SeverityBadge severity={ticket.severity} />
+            </Prop>
+            <Prop icon={Layers} label="Task type">
+              {ticket.plan?.taskType ? <Badge tone={TASK_TONE[ticket.plan.taskType]}>{TASK_TYPE_LABEL[ticket.plan.taskType]}</Badge> : <span className="muted">Not set</span>}
+            </Prop>
           </>
-        ) : (
-          <ActivityList ticket={ticket} userId={userId} />
         )}
-      </div>
-    </section>
+      </dl>
+      {stage !== 'canceled' && (
+        <section className="pt-ask" aria-labelledby="pt-ask-head">
+          <p className="pt-ask-head" id="pt-ask-head">
+            Questions about this ticket?
+          </p>
+          <p className="pt-ask-text">{stage === 'new' ? 'Our assistant has read your report and answers right away.' : 'Our assistant has read the RCA and every update, and answers right away.'}</p>
+          <Button variant="primary" size="sm" onClick={onAsk}>
+            <MessageSquare size={15} aria-hidden />
+            Ask AI
+          </Button>
+        </section>
+      )}
+    </aside>
   );
 }
 
-/** Everything that has happened on the ticket that the client may see, newest first. */
-function ActivityList({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const { now } = useStore();
-  const actorName = usePortalActorName();
-  // Internal notes and internal assignment lines never reach the portal.
-  const history = useMemo(() => [...clientVisibleActivity(ticket)].reverse(), [ticket]);
-  const declines = ticket.feedback.filter((f) => f.decision === 'declined');
-
-  return (
-      <ol className="timeline portal-timeline">
-        {history.map((a) => {
-          const Icon = KIND_ICON[a.kind];
-          const sent = a.kind === 'handoff' ? ticket.handoffs.find((h) => Math.abs(h.at - a.at) < 5000) : undefined;
-          const found = a.kind === 'diagnosis' ? ticket.diagnosis : undefined;
-          // A decline carries the client's reason; show it under the line.
-          const reason = a.actor.type === 'client' && a.text.startsWith('Declined') ? declines.find((f) => Math.abs(f.at - a.at) < 60_000) : undefined;
-          const who = actorName(a.actor, userId);
-          return (
-            <li key={a.id} className={cx('timeline-item', `kind-${a.kind}`)}>
-              <span className="timeline-icon" aria-hidden>
-                <Icon size={14} />
-              </span>
-              <div className="timeline-body">
-                <p className="timeline-text">{sent ? 'Sent the fix for your review' : found ? 'Found the problem and started the fix' : portalText(a)}</p>
-                {(reason || sent) && <p className="portal-quote">{sent ? a.text : reason?.note}</p>}
-                {reason?.attachments && reason.attachments.length > 0 && <Attachments files={reason.attachments} />}
-                {sent && sent.attachments.length > 0 && <Attachments files={sent.attachments} />}
-                {found && (
-                  <dl className="diagnosis is-compact">
-                    <div>
-                      <dt>What’s wrong</dt>
-                      <dd>{found.issue}</dd>
-                    </div>
-                    <div>
-                      <dt>How we’ll fix it</dt>
-                      <dd>{found.fix}</dd>
-                    </div>
-                  </dl>
-                )}
-                <p className="timeline-meta">
-                  <span>{who}</span>
-                  <time title={fmtDateTime(a.at)}>{fmtRelative(a.at, now)}</time>
-                </p>
+/** Ask about the ticket: answers come from its own data, like asking where a delivery is. */
+function AskDrawer({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) {
+  const { slaOf, now } = useStore();
+  const [thread, setThread] = useState<{ q: string; a: string }[]>([]);
+  const [text, setText] = useState('');
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+  }, [thread.length]);
+  const ask = (q: string) => {
+    if (!q.trim()) return;
+    setThread((t) => [...t, { q: q.trim(), a: clientAnswer(q, ticket, slaOf(ticket), now) }]);
+    setText('');
+  };
+  const unasked = CLIENT_STARTERS.filter((q) => !thread.some((x) => x.q === q));
+  return createPortal(
+    <div className="drawer-layer" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="pt-ask-title">
+        <header className="drawer-head">
+          <div>
+            <h2 id="pt-ask-title" className="drawer-title">
+              Ask AI
+            </h2>
+            <p className="drawer-sub">About {ticket.id}. Answers come from the RCA and the latest updates.</p>
+          </div>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+            <X size={18} aria-hidden />
+          </button>
+        </header>
+        <div className="ask-ai">
+          <div className="ai-scroll" ref={scroller}>
+            {thread.length === 0 && (
+              <div className="ai-a">
+                <span className="ai-mark" aria-hidden>
+                  AI
+                </span>
+                <div className="ai-a-body">
+                  <p className="ai-a-text">Hi! Ask me how this ticket is going: when it will be fixed, what’s happening now, or what you need to do.</p>
+                </div>
               </div>
-            </li>
-          );
-        })}
-      </ol>
+            )}
+            {thread.map((x, i) => (
+              <div key={i} className="ai-exchange">
+                <div className="ai-q">
+                  <p>{x.q}</p>
+                </div>
+                <div className="ai-a">
+                  <span className="ai-mark" aria-hidden>
+                    AI
+                  </span>
+                  <div className="ai-a-body">
+                    <p className="ai-a-text">{x.a}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="ai-foot">
+            {unasked.length > 0 && (
+              <div className="ai-starters">
+                {unasked.map((q) => (
+                  <button key={q} type="button" className="choice-chip" onClick={() => ask(q)}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+            <form
+              className="ai-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                ask(text);
+              }}
+            >
+              <input className="ai-input" aria-label="Ask about this ticket" placeholder="Ask about this ticket…" value={text} onChange={(e) => setText(e.target.value)} />
+              <button type="submit" className="ai-send" aria-label="Send" disabled={!text.trim()}>
+                <ArrowUp size={17} aria-hidden />
+              </button>
+            </form>
+          </div>
+        </div>
+      </aside>
+    </div>,
+    document.body,
   );
 }
 
@@ -303,121 +322,83 @@ function ActivityList({ ticket, userId }: { ticket: Ticket; userId: string }) {
 
 export function PortalTicket() {
   const { id } = useParams();
-  const { now, assetOf, reporterOf, memberOf, slaOf } = useStore();
+  const { reviewFix, toast, now } = useStore();
   const { user, tickets } = usePortalUser();
-  // Only the client's own company's tickets can be opened here.
   const ticket = tickets.find((t) => t.id === id);
+  const [asking, setAsking] = useState(false);
 
   if (!user) return null;
   if (!ticket) {
     return (
       <div className="page">
-        <Empty
-          title="We can’t find that ticket"
-          action={
-            <Link to="/portal" className="btn btn-secondary">
-              Back to tickets
-            </Link>
-          }
-        >
-          It may belong to another company, or the link is wrong.
-        </Empty>
+        <Card>
+          <Empty
+            title="We can’t find that ticket"
+            action={
+              <Link to="/portal" className="btn btn-secondary">
+                Back to tickets
+              </Link>
+            }
+          >
+            It may belong to another company, or the link is wrong.
+          </Empty>
+        </Card>
       </div>
     );
   }
-
-  const asset = assetOf(ticket.assetId);
-  const reporter = reporterOf(ticket);
-  const handler = memberOf(ticket.assigneeId);
-  const sla = slaOf(ticket);
-  const responded = ticket.firstRespondedAt;
+  const stage = portalStatus(ticket.status);
+  const StatusIcon = STATUS_ICON[stage];
+  const deploy = () => {
+    if (reviewFix(ticket.id, user.id, 'approved', '')) toast(`${ticket.id} deployed. Thanks!`);
+  };
+  const toComments = () => {
+    document.getElementById('pt-comments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelector<HTMLTextAreaElement>('#pt-comments textarea')?.focus({ preventScroll: true });
+  };
 
   return (
     <div className="page">
-      <BackHeader title="Ticket detail" description={`Raised by ${reporter?.id === user.id ? 'you' : (reporter?.name ?? 'your team')} ${whenText(ticket.createdAt, now)}`} fallback="/portal" backLabel="Back to tickets" />
-
-      <Card className="ticket-card">
-        <header className="ticket-card-head portal-ticket-head">
-          <div className="portal-ticket-head-row">
-            <span className="ticket-id ticket-id-lg">{ticket.id}</span>
-            <StatusBadge status={ticket.status} />
+      <Card className="ticket-card tdl">
+        <header className="tdl-head">
+          <Link to="/portal" className="back-btn" aria-label="Back to tickets">
+            <ArrowLeft size={20} aria-hidden />
+          </Link>
+          <div className="tdl-head-text">
+            <span className="ticket-id">{ticket.id}</span>
+            <h1 className="tdl-title">{ticket.title}</h1>
           </div>
-          <h2 className="ticket-card-title">{ticket.title}</h2>
+          {/* The stage cards below say where it stands; only a canceled ticket, which has none, shows it here. */}
+          {stage === 'canceled' && (
+            <div className="tdl-actions">
+              <span className={cx('tdl-status', `tone-${STATUS_TONE[stage]}`)}>
+                <StatusIcon size={15} aria-hidden />
+                {PORTAL_STATUS_LABEL[stage]}
+              </span>
+            </div>
+          )}
         </header>
+        <Stages ticket={ticket} />
+        {stage === 'canceled' && ticket.cancellation && (
+          <div className={cx('tdl-banner', 'tone-neutral')}>
+            <Ban size={17} aria-hidden className="tdl-banner-icon" />
+            <div className="tdl-banner-body">
+              <p>
+                <strong>Canceled.</strong> {ticket.cancellation.reason}
+              </p>
+              <p className="tdl-banner-meta">NXS, {fmtRelative(ticket.cancellation.at, now).toLowerCase()}</p>
+            </div>
+          </div>
+        )}
 
         <div className="ticket-body">
           <div className="ticket-main">
-            {/* Where it stands first, then what the client can do about it. */}
-            <section className="main-block" aria-label="Progress">
-              {ticket.status === 'canceled' ? (
-                <p className="portal-state-note tone-neutral">
-                  <Ban size={16} aria-hidden /> NXS canceled this ticket{ticket.cancellation ? `: ${ticket.cancellation.reason}` : '.'}
-                </p>
-              ) : (
-                <Progress ticket={ticket} />
-              )}
-              {ticket.status === 'reopened' && (
-                <p className="portal-state-note tone-red portal-state-after">
-                  <RotateCcw size={16} aria-hidden /> The fix didn’t hold, so NXS is working on it again.
-                </p>
-              )}
-              {ticket.status === 'waiting_approval' && <ReviewPanel ticket={ticket} userId={user.id} />}
-            </section>
-
-            {ticket.diagnosis && <FoundCard ticket={ticket} />}
-
-            <PortalTabs ticket={ticket} userId={user.id} />
+            <Timeline ticket={ticket} userId={user.id} onDeploy={deploy} onComment={toComments} />
+            <CommentsSection ticket={ticket} userId={user.id} />
           </div>
-
-          <aside className="ticket-aside" aria-label="Ticket details">
-            <dl className="props">
-              <Prop icon={Boxes} label="Asset">
-                {asset?.name ?? '—'}
-              </Prop>
-              {ticket.request && (
-                <Prop icon={ClipboardList} label="Type of request">
-                  {REQUEST_TYPE_LABEL[ticket.request.type]}
-                </Prop>
-              )}
-              <Prop icon={CircleUser} label="Requested by" title={reporter?.title}>
-                {ticket.request?.requestedBy || (reporter?.id === user.id ? `${reporter.name} (you)` : (reporter?.name ?? '—'))}
-              </Prop>
-              {ticket.request?.neededBy && (
-                <Prop icon={CalendarClock} label="Needed by">
-                  {fmtDateYear(ticket.request.neededBy)}
-                </Prop>
-              )}
-              <Prop icon={User} label="Handled by">
-                {handler ? `${handler.name}, NXS` : <span className="muted">Not picked up yet</span>}
-              </Prop>
-              <Prop icon={Signal} label="Priority">
-                <SeverityBadge severity={ticket.severity} />
-              </Prop>
-              <Prop icon={Timer} label="First response">
-                {responded ? (
-                  `Within ${fmtDuration(responded - ticket.createdAt)}`
-                ) : sla.firstResponse.remainingMs >= 0 ? (
-                  `Expected within ${fmtDuration(sla.firstResponse.remainingMs)}`
-                ) : (
-                  // Late is said plainly: the client should know NXS is behind.
-                  <span className="portal-late">Late by {fmtDuration(-sla.firstResponse.remainingMs)}</span>
-                )}
-              </Prop>
-              {/* The SLA's resolution target, as a plain expectation rather than a deadline. */}
-              {isOpen(ticket) && (
-                <Prop icon={CalendarClock} label="Expected fix" title={fmtDateTime(sla.resolution.due)}>
-                  {sla.resolution.remainingMs >= 0 ? `In about ${fmtDuration(sla.resolution.remainingMs)}` : <span className="portal-late">Running late</span>}
-                  <span className="prop-meta">by {fmtDateTime(sla.resolution.due)}</span>
-                </Prop>
-              )}
-              <Prop icon={CalendarDays} label="Raised" title={fmtRelative(ticket.createdAt, now)}>
-                {fmtDateTime(ticket.createdAt)}
-                <span className="prop-meta">{ticket.source.channel === 'portal' ? 'in the portal' : 'logged by NXS for you'}</span>
-              </Prop>
-            </dl>
-          </aside>
+          <PortalAside ticket={ticket} userId={user.id} onAsk={() => setAsking(true)} />
         </div>
       </Card>
+      {asking && <AskDrawer ticket={ticket} onClose={() => setAsking(false)} />}
     </div>
   );
 }

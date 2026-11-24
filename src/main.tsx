@@ -7,6 +7,10 @@ import './styles.css';
 import { AuthProvider } from './auth';
 import { StoreProvider } from './store';
 import { App } from './App';
+import { applyTheme, readThemePref } from './lib/theme';
+
+// Set the theme before the first paint so there is no flash of the wrong one.
+applyTheme(readThemePref());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

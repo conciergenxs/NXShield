@@ -48,6 +48,6 @@ export const statusLabelFor = (portal: boolean, s: TicketStatus) => (portal ? PO
 /** Stage order for lists and boards. A client's own to-do (reviewing a fix) comes first for them. */
 export const STAFF_ORDER: TicketStatus[] = STATUSES;
 /** Only the stages a client sees: blocked and testing tickets sit under In progress. */
-export const PORTAL_ORDER: TicketStatus[] = ['waiting_approval', 'new', 'reopened', 'in_progress', 'resolved', 'canceled'];
+export const PORTAL_ORDER: TicketStatus[] = ['ready_to_deploy', 'new', 'in_progress', 'resolved', 'canceled'];
 /** The stage a ticket is grouped under in the current view. */
 export const groupStatusFor = (portal: boolean, s: TicketStatus) => (portal ? portalStatus(s) : s);

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, Bell, Boxes, Building2, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, LayoutDashboard, LogOut, Search, Settings, Ticket as TicketIcon, TriangleAlert, UserPlus, X } from 'lucide-react';
+import { Activity, ArrowRightLeft, AtSign, Bell, Boxes, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, LayoutDashboard, LogOut, Search, Settings, Ticket as TicketIcon, TriangleAlert, UserPlus, X } from 'lucide-react';
 import type { NotificationEventType } from '../types';
 import { fmtRelative } from '../lib/format';
 import { useAuth } from '../auth';
 import { useStore } from '../store';
 import { ClientLogo, StatusBadge } from './domain';
 import { Dialogs } from './dialogs';
+import { ThemeSwitch } from './ThemeSwitch';
 import { Avatar, cx, usePopover } from './ui';
 
 /* ---------- Brand ---------- */
@@ -15,7 +17,7 @@ function Brand() {
   return (
     <Link to="/" className="brand" aria-label="NXShield overview">
       <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
-        <rect width="32" height="32" rx="9" fill="#fff" fillOpacity="0.14" />
+        <rect width="32" height="32" rx="9" fill="#c11fff" />
         <path d="M16 6.5l8 3v6.2c0 4.6-3.2 8.2-8 9.8-4.8-1.6-8-5.2-8-9.8V9.5z" fill="none" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
         <path d="M12.5 15.8l2.6 2.6 4.6-5" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -33,8 +35,6 @@ function TopNav() {
   const items = [
     { to: '/', label: 'Overview', icon: LayoutDashboard, active: pathname === '/' },
     { to: '/tickets', label: 'Tickets', icon: TicketIcon, active: pathname.startsWith('/tickets'), count: newCount },
-    // Assets belong to a client, so an asset page counts as part of Clients.
-    { to: '/clients', label: 'Clients', icon: Building2, active: pathname.startsWith('/clients') || pathname.startsWith('/assets') },
     { to: '/settings', label: 'Settings', icon: Settings, active: pathname.startsWith('/settings') },
   ];
   return (
@@ -44,7 +44,7 @@ function TopNav() {
           <Icon size={17} aria-hidden />
           {label}
           {count ? (
-            <span className="topnav-count" title={`${count} new tickets waiting to be assigned`}>
+            <span className="topnav-count" title={`${count} new tickets waiting for QA`}>
               {count}
             </span>
           ) : null}
@@ -58,7 +58,6 @@ function TopNav() {
 
 function useCrumbs(): { label: string; to?: string }[] {
   const { pathname } = useLocation();
-  const { clientOf, assetOf } = useStore();
   const [, section, id] = pathname.split('/');
   switch (section) {
     case '':
@@ -67,13 +66,6 @@ function useCrumbs(): { label: string; to?: string }[] {
     case 'tickets':
       if (!id || id === 'board' || id === 'calendar') return [{ label: 'Tickets' }];
       return [{ label: 'Tickets', to: '/tickets' }, { label: id }];
-    case 'clients':
-      return id ? [{ label: 'Clients', to: '/clients' }, { label: clientOf(id)?.name ?? 'Client' }] : [{ label: 'Clients' }];
-    case 'assets': {
-      const asset = assetOf(id);
-      const client = asset && clientOf(asset.clientId);
-      return [{ label: 'Clients', to: '/clients' }, ...(client ? [{ label: client.name, to: `/clients/${client.id}` }] : []), { label: asset?.name ?? 'Asset' }];
-    }
     case 'settings':
       return [{ label: 'Settings' }];
     default:
@@ -171,7 +163,7 @@ function GlobalSearch() {
             <div className="search-group">
               <p className="search-heading">Clients</p>
               {results.clients.map((c) => (
-                <button key={c.id} type="button" className="search-row" onClick={() => go(`/clients/${c.id}`)}>
+                <button key={c.id} type="button" className="search-row" onClick={() => go('/settings/workspace')}>
                   <ClientLogo client={c} size={24} />
                   <span className="truncate search-main">{c.name}</span>
                   <span className="muted">{c.industry}</span>
@@ -183,7 +175,7 @@ function GlobalSearch() {
             <div className="search-group">
               <p className="search-heading">Assets</p>
               {results.assets.map((a) => (
-                <button key={a.id} type="button" className="search-row" onClick={() => go(`/clients/${a.clientId}?tab=assets`)}>
+                <button key={a.id} type="button" className="search-row" onClick={() => go('/settings/workspace')}>
                   <Boxes size={16} aria-hidden className="muted" />
                   <span className="truncate search-main">{a.name}</span>
                   <span className="muted">{clientOf(a.clientId)?.name}</span>
@@ -202,65 +194,118 @@ function GlobalSearch() {
 const EVENT_ICON: Record<NotificationEventType, { icon: typeof Bell; tone: string }> = {
   ticket_created: { icon: TicketIcon, tone: 'blue' },
   ticket_assigned: { icon: UserPlus, tone: 'blue' },
-  status_updated: { icon: ChevronRight, tone: 'neutral' },
+  status_updated: { icon: ArrowRightLeft, tone: 'blue' },
   sla_approaching: { icon: TriangleAlert, tone: 'orange' },
   sla_breached: { icon: CircleX, tone: 'red' },
   ticket_resolved: { icon: CircleCheck, tone: 'purple' },
   ticket_canceled: { icon: Check, tone: 'neutral' },
   progress_update: { icon: Activity, tone: 'pink' },
+  mention: { icon: AtSign, tone: 'purple' },
+};
+
+/** The kind of a notification, short, above its title. */
+const EVENT_KIND: Record<NotificationEventType, string> = {
+  ticket_created: 'New ticket',
+  ticket_assigned: 'Assigned',
+  status_updated: 'Status',
+  sla_approaching: 'SLA at risk',
+  sla_breached: 'SLA breached',
+  ticket_resolved: 'Resolved',
+  ticket_canceled: 'Canceled',
+  progress_update: 'Progress',
+  mention: 'Mention',
 };
 
 function NotificationCenter() {
   const { notifications, markRead, markAllRead, now } = useStore();
   const navigate = useNavigate();
-  const { open, setOpen, ref } = usePopover();
+  const [open, setOpen] = useState(false);
   const unread = notifications.filter((n) => !n.read).length;
+  // A side peek over the page: Escape or a click outside closes it.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
   return (
-    <div className="popover-anchor" ref={ref}>
-      <button type="button" className={cx('icon-btn', open && 'is-open')} aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'} aria-expanded={open} onClick={() => setOpen(!open)}>
+    <>
+      <button type="button" className={cx('icon-btn', open && 'is-open')} aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'} aria-expanded={open} onClick={() => setOpen(true)}>
         <Bell size={19} />
         {unread > 0 && <span className="icon-btn-count">{unread > 9 ? '9+' : unread}</span>}
       </button>
-      {open && (
-        <div className="popover notif-panel" role="dialog" aria-label="Notifications">
-          <header className="popover-header">
-            <h2>Notifications</h2>
-            <button type="button" className="link-btn" disabled={!unread} onClick={markAllRead}>
-              Mark all as read
-            </button>
-          </header>
-          <ul className="notif-list">
-            {notifications.length === 0 && <li className="notif-empty">You're all caught up.</li>}
-            {notifications.slice(0, 20).map((n) => {
-              const { icon: Icon, tone } = EVENT_ICON[n.type];
-              return (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    className={cx('notif', !n.read && 'is-unread')}
-                    onClick={() => {
-                      markRead(n.id);
-                      setOpen(false);
-                      navigate(`/tickets/${n.ticketId}`);
-                    }}
-                  >
-                    <span className={cx('notif-icon', `tone-${tone}`)}>
-                      <Icon size={15} aria-hidden />
-                    </span>
-                    <span className="notif-body">
-                      <span className="notif-title">{n.title}</span>
-                      <span className="notif-text">{n.body}</span>
-                      <span className="notif-time">{fmtRelative(n.at, now)}</span>
-                    </span>
-                    {!n.read && <span className="notif-dot" aria-label="Unread" />}
+      {open &&
+        createPortal(
+          <div className="drawer-layer" onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}>
+            <aside className="drawer notif-drawer" role="dialog" aria-modal="true" aria-labelledby="notif-title">
+              <header className="drawer-head">
+                <div>
+                  <h2 id="notif-title" className="drawer-title">
+                    Notifications
+                  </h2>
+                  <p className="drawer-sub">{unread ? `${unread} unread` : 'You’re all caught up.'}</p>
+                </div>
+                <div className="notif-drawer-actions">
+                  <button type="button" className="link-btn" disabled={!unread} onClick={markAllRead}>
+                    Mark all as read
                   </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-    </div>
+                  <button type="button" className="icon-btn" aria-label="Close" onClick={() => setOpen(false)}>
+                    <X size={18} aria-hidden />
+                  </button>
+                </div>
+              </header>
+              <div className="notif-feed">
+                {notifications.length === 0 && <p className="notif-empty">Nothing here yet.</p>}
+                {(
+                  [
+                    ['New', notifications.filter((n) => !n.read)],
+                    ['Earlier', notifications.filter((n) => n.read)],
+                  ] as const
+                ).map(
+                  ([heading, list]) =>
+                    list.length > 0 && (
+                      <section key={heading} className="notif-group" aria-label={heading}>
+                        <h3 className="notif-group-title">{heading}</h3>
+                        <ul className="notif-cards">
+                          {list.slice(0, 30).map((n) => {
+                            const { icon: Icon, tone } = EVENT_ICON[n.type];
+                            return (
+                              <li key={n.id}>
+                                <button
+                                  type="button"
+                                  className={cx('notif-card', !n.read && 'is-unread')}
+                                  onClick={() => {
+                                    markRead(n.id);
+                                    setOpen(false);
+                                    navigate(`/tickets/${n.ticketId}`);
+                                  }}
+                                >
+                                  <span className={cx('notif-icon', `tone-${tone}`)}>
+                                    <Icon size={15} aria-hidden />
+                                  </span>
+                                  <span className="notif-card-body">
+                                    <span className="notif-card-meta">
+                                      <span className={cx('notif-kind', `tone-${tone}`)}>{EVENT_KIND[n.type]}</span>
+                                      <span className="notif-card-time">{fmtRelative(n.at, now)}</span>
+                                      {!n.read && <span className="notif-dot" aria-label="Unread" />}
+                                    </span>
+                                    <span className="notif-card-title">{n.title}</span>
+                                    <span className="notif-card-text">{n.body}</span>
+                                  </span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    ),
+                )}
+              </div>
+            </aside>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -290,6 +335,7 @@ function ProfileMenu() {
           <Link to="/settings" className="menu-item" onClick={() => setOpen(false)}>
             <Settings size={16} aria-hidden /> Settings
           </Link>
+          <ThemeSwitch />
           <div className="menu-sep" role="separator" />
           <button type="button" className="menu-item menu-item-signout" onClick={signOut}>
             <LogOut size={16} aria-hidden /> Sign out
@@ -326,12 +372,22 @@ export function Toasts() {
 
 /* ---------- Shell ---------- */
 
+/** The tickets view last open (list, board or calendar), so a ticket's Back returns to it. */
+export const TICKETS_VIEW_KEY = 'nxshield.ticketsView';
+
 export function Layout() {
   const crumbs = useCrumbs();
   const { pathname } = useLocation();
 
   useEffect(() => {
     window.scrollTo(0, 0);
+    if (/^\/tickets(\/(board|calendar))?$/.test(pathname)) {
+      try {
+        sessionStorage.setItem(TICKETS_VIEW_KEY, pathname);
+      } catch {
+        // Without storage, Back goes to the list view.
+      }
+    }
     document.title = `${crumbs[crumbs.length - 1].label} · NXShield`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
@@ -347,15 +403,22 @@ export function Layout() {
     return () => ro.disconnect();
   }, []);
 
+  // The header is clear at the top of the page and blurs what scrolls under it.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 0);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
     <div className="shell">
       <div className="band" aria-hidden />
-      <header className="topbar" ref={topbarRef}>
-        {/* A copy of the page background, clipped to the header, so content
-            scrolling up disappears behind it instead of showing through. */}
-        <div className="topbar-bg" aria-hidden>
-          <div className="band" />
-        </div>
+      <header className={cx('topbar', scrolled && 'is-scrolled')} ref={topbarRef}>
+        {/* The blur sits on its own layer, so the header itself never becomes
+            the anchor for fixed popovers. */}
+        <div className="topbar-bg" aria-hidden />
         <div className="topbar-inner">
           <Brand />
           <TopNav />

@@ -1,57 +1,132 @@
-import type { RequestType, AssetCategory, AssetStatus, Availability, Category, TicketChannel, Level, NotificationEventType, Permission, RecipientKind, Role, Severity, Ticket, TicketStatus, MonitorMethod } from '../types';
+import type { TaskType, SlaExclusionKind, RequestType, AssetCategory, AssetStatus, Availability, Category, TicketChannel, Level, NotificationEventType, Permission, RecipientKind, Role, Severity, Ticket, TicketStatus, MonitorMethod } from '../types';
 
 /* ---------- Labels ---------- */
 
-export const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
-/** Priority, P1 to P4. Only Tech issues get one; it comes from the impact questions. */
-export const SEVERITY_LABEL: Record<Severity, string> = { critical: 'P1 Critical', high: 'P2 High', medium: 'P3 Medium', low: 'P4 Low' };
+export const SEVERITIES: Severity[] = ['critical', 'medium', 'low'];
+/** Priority as in the SLA: P1 Critical, P2 Medium, P3 Low. Every category gets one, from two questions. */
+export const SEVERITY_LABEL: Record<Severity, string> = { critical: 'P1 Critical', medium: 'P2 Medium', low: 'P3 Low' };
 export const NO_PRIORITY_LABEL = 'No priority';
 export const priorityLabel = (s: Severity | null) => (s ? SEVERITY_LABEL[s] : NO_PRIORITY_LABEL);
-/**
- * Operational and Hardware issues have no priority rating; they are picked up
- * by category. Until category targets exist, their SLA clock runs on the P4
- * Low timings.
- */
+/** Older tickets logged without a priority run on P3 Low timings. */
 export const UNRATED_SEVERITY: Severity = 'low';
 
-export const CATEGORIES: Category[] = ['tech', 'business', 'operational', 'hardware'];
+/** Tech includes hardware, as in the SLA. */
+export const CATEGORIES: Category[] = ['tech', 'business', 'operational'];
 export const CATEGORY_LABEL: Record<Category, string> = {
   tech: 'Tech issue',
   business: 'Business issue',
   operational: 'Operational issue',
-  hardware: 'Hardware issue',
 };
+/* ---------- Planning: task type and weekly sprints ---------- */
+
+export const TASK_TYPES: TaskType[] = ['frontend', 'backend'];
+export const TASK_TYPE_LABEL: Record<TaskType, string> = {
+  frontend: 'Frontend Development',
+  backend: 'Backend Development',
+};
+
+const DAY_MS = 24 * 60 * 60_000;
+/** Sprints run a week, Thursday to Wednesday, and are named after their first day: SP.YY.MM.DD. */
+export function sprintStart(ts: number): number {
+  const d = new Date(ts);
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const back = (day.getDay() - 4 + 7) % 7;
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate() - back).getTime();
+}
+export function sprintCode(start: number): string {
+  const d = new Date(start);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `SP.${two(d.getFullYear() % 100)}.${two(d.getMonth() + 1)}.${two(d.getDate())}`;
+}
+export const sprintOf = (ts: number) => sprintCode(sprintStart(ts));
+/** The sprints a ticket can be planned in: last week's, this week's and the next two. */
+export function sprintChoices(now: number): { code: string; start: number; end: number; when: string }[] {
+  const current = sprintStart(now);
+  const WHEN = ['Last sprint', 'This sprint', 'Next sprint', 'In two weeks'];
+  return [-1, 0, 1, 2].map((n, i) => {
+    const start = new Date(current + n * 7 * DAY_MS + 12 * 60 * 60_000);
+    const s = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+    return { code: sprintCode(s), start: s, end: s + 6 * DAY_MS, when: WHEN[i] };
+  });
+}
+
 export const CATEGORY_HINT: Record<Category, string> = {
-  tech: 'Something in the system isn’t working: an outage, an error, a broken form, slow pages.',
-  business: 'A business rule, policy, data definition or requirement.',
-  operational: 'Day-to-day requests: content updates, banners, articles or how-to questions.',
-  hardware: 'A device or network fault that stops you using the website or dashboard.',
+  tech: 'Something in a website, dashboard or app isn’t working, or a phone, laptop or network fault stops you using it.',
+  business: 'A business rule, policy, data definition or requirement needs changing or clarifying.',
+  operational: 'Day-to-day campaign operations, such as one-to-one activities, scheduling or participant handling.',
 };
-/** The categories shown on a new ticket, in this order. Only the open ones can be picked. */
-export const NEW_TICKET_CATEGORIES: Category[] = ['tech', 'business', 'operational', 'hardware'];
+/** The categories shown on a new ticket, in this order. */
+export const NEW_TICKET_CATEGORIES: Category[] = CATEGORIES;
+/** Every category can be picked: all three get a priority from the same two questions. */
+export const OPEN_TICKET_CATEGORIES: Category[] = CATEGORIES;
 
 /**
- * The impact questions for a Tech issue, asked in order until one is a yes.
- * The first yes sets the priority; three noes make it P4 Low.
+ * Priority, as the SLA sets it: rate the impact and take the highest. The two
+ * questions are written from the SLA's four dimensions (confidentiality,
+ * integrity, availability, business impact). A yes to the first is P1, a yes
+ * to the second is P2, two noes are P3.
  */
-export const PRIORITY_QUESTIONS: { severity: Severity; text: string }[] = [
-  { severity: 'critical', text: 'Is the service down, is personal or confidential data exposed or changed, or is a live campaign blocked?' },
-  { severity: 'high', text: 'Is a major feature not working, or is the service badly slowed down?' },
-  { severity: 'medium', text: 'Is only part of a feature affected, or is there a way to work around it?' },
+export const PRIORITY_QUESTIONS: { severity: Exclude<Severity, 'low'>; text: string; signs: string[] }[] = [
+  {
+    severity: 'critical',
+    text: 'Is any of this happening?',
+    signs: [
+      'The service or a core function is down, with no workaround',
+      'Personal data, WhatsApp numbers, trial data or competitor insights are exposed, or might be',
+      'Data or campaign settings are corrupted, lost, tampered with, or sent to the wrong people',
+      'A live campaign is blocked, or there is legal or regulatory exposure',
+    ],
+  },
+  {
+    severity: 'medium',
+    text: 'If not, is any of this happening?',
+    signs: [
+      'A major function is unavailable, or badly slowed for many users',
+      'Data in a major function is wrong and needs an urgent fix',
+      'A limited amount of non-sensitive data is exposed',
+      'A live campaign is badly disrupted or at risk',
+    ],
+  },
 ];
-/** The categories that can be picked today. The rest show as coming soon until their questions exist. */
-export const OPEN_TICKET_CATEGORIES: Category[] = ['tech'];
+
+/** Examples from the SLA, per category and priority, behind "See examples". */
+export const PRIORITY_EXAMPLES: Record<Category, Record<Severity, string[]>> = {
+  tech: {
+    critical: [
+      'Website fully down, or returning errors to most users',
+      'Consumer data or quiz answers accessed or exported without permission',
+      'WhatsApp messages sent to the wrong audience by a system fault',
+      'Dashboard down during a live campaign',
+      'A lost or stolen device holding consumer data or dashboard access',
+    ],
+    medium: [
+      'Quiz results not saving for most users while the site stays up',
+      'Campaign setup unavailable, so a campaign cannot launch',
+      'Pages taking more than 5 seconds to load',
+      'A device or network fault stopping one campaign team',
+    ],
+    low: ['Typos, cosmetic or alignment issues', 'A CSV export times out but the on-screen view works', 'One phone cannot open the dashboard, with no campaign impact', 'Small enhancement requests'],
+  },
+  business: {
+    critical: ['A wrong business rule hits a live campaign for many consumers', 'Missing campaign data stops a live campaign from launching or being reported'],
+    medium: ['A requirement change needed before the next campaign phase', 'A data definition mismatch that distorts campaign reports', 'A policy question holding up an ongoing activity'],
+    low: ['A policy or data definition question with no campaign impact', 'Small wording changes to business rules or documents'],
+  },
+  operational: {
+    critical: ['A live one-to-one activity cannot run at all', 'Participant data handled or shared in error during an activity'],
+    medium: ['A one-to-one activity runs only in part, such as a scheduling clash', 'A delay in recording or reporting activity results'],
+    low: ['A small change to an activity schedule or script', 'An operational question with no effect on a live activity'],
+  },
+};
 
 /**
- * What each priority means and what the client can count on, in their words,
- * from the SLA table. The reply and fix times come from the client's SLA
- * policy; these are the parts the policy does not hold.
+ * What each priority means and what the client can count on, in plain words,
+ * from the SLA. NXS works around the clock for every priority.
  */
-export const PRIORITY_PROMISE: Record<Severity, { word: string; because: string; hours: string; updates: string; stopgap?: string }> = {
-  critical: { word: 'urgent', because: 'the service is down, data is at risk, or a live campaign is blocked', hours: 'around the clock, weekends included', updates: 'every hour' },
-  high: { word: 'high', because: 'a major feature isn’t working', hours: 'during business hours', updates: 'every 4 business hours', stopgap: 'within 4 business hours' },
-  medium: { word: 'medium', because: 'only part of a feature is affected, or there’s a way around it', hours: 'during business hours', updates: 'once a day', stopgap: 'within 1 business day' },
-  low: { word: 'low', because: 'it’s a minor issue', hours: 'during business hours', updates: 'when it’s fixed, and in your monthly report' },
+export const PRIORITY_PROMISE: Record<Severity, { word: string; because: string; updates: string; fix: string }> = {
+  critical: { word: 'urgent', because: 'the service, consumer data or a live campaign is hit', updates: 'every hour', fix: 'by the time set in the diagnosis' },
+  medium: { word: 'medium', because: 'a major function is disrupted, with no sensitive data exposed', updates: 'every 4 hours', fix: 'within 1 day' },
+  low: { word: 'low', because: 'the impact is limited, cosmetic, or there is a way around it', updates: 'when it’s fixed', fix: 'within 3 days' },
 };
 
 /** The priority the answers so far lead to, or null while a question is still open. */
@@ -63,27 +138,43 @@ export function priorityFromAnswers(answers: (boolean | null)[]): Severity | nul
   return 'low';
 }
 
+/** The SLA's exclusions, in plain words. */
+export const SLA_EXCLUSION_LABEL: Record<SlaExclusionKind, string> = {
+  third_party: 'Third-party outage',
+  client_side: 'Caused on the client’s side',
+  force_majeure: 'Force majeure',
+  maintenance: 'Approved maintenance',
+  change_request: 'Change request',
+};
+export const SLA_EXCLUSION_HINT: Record<SlaExclusionKind, string> = {
+  third_party: 'A provider outside NXS, such as a payment gateway or WhatsApp, is down.',
+  client_side: 'The cause is on the client’s systems, devices or access.',
+  force_majeure: 'Events outside anyone’s control.',
+  maintenance: 'Planned maintenance the client agreed to.',
+  change_request: 'New work or a change, not a fault: it follows the change process.',
+};
+
 /** NXS's own stages, in the order work moves through them. */
 export const STATUSES: TicketStatus[] = [
   'new',
-  'reopened',
   'in_progress',
   'blocked',
   'waiting_testing',
   'on_testing',
-  'waiting_approval',
+  'ready_to_deploy',
   'resolved',
   'canceled',
 ];
 export const STATUS_LABEL: Record<TicketStatus, string> = {
   new: 'New',
-  reopened: 'Reopened',
+  // QA confirmed and assigned it; the assignee hasn't started yet.
+  not_started: 'Not started',
   in_progress: 'In progress',
-  blocked: 'Blocker',
+  blocked: 'Blocked',
   waiting_testing: 'Waiting for testing',
   on_testing: 'On testing',
-  // Done and tested on NXS's side; the client still has to approve the fix.
-  waiting_approval: 'Waiting for approval',
+  // Tested; the client checks it and approves it going live, or says what's still wrong.
+  ready_to_deploy: 'Ready to deploy',
   resolved: 'Resolved',
   canceled: 'Canceled',
 };
@@ -161,22 +252,24 @@ export const EVENT_LABEL: Record<NotificationEventType, string> = {
   ticket_resolved: 'Ticket resolved',
   ticket_canceled: 'Ticket canceled',
   progress_update: 'Progress update',
+  mention: 'Mentioned in a comment',
 };
 
 /* ---------- Workflow ---------- */
 
-export const OPEN_STATUSES: TicketStatus[] = ['new', 'reopened', 'in_progress', 'blocked', 'waiting_testing', 'on_testing', 'waiting_approval'];
+export const OPEN_STATUSES: TicketStatus[] = ['new', 'not_started', 'in_progress', 'blocked', 'waiting_testing', 'on_testing', 'ready_to_deploy'];
 export const isOpen = (t: Pick<Ticket, 'status'>) => OPEN_STATUSES.includes(t.status);
 
 /** The linear path: the one step the main button takes from each stage.
- *  Waiting for approval has none (the client answers in the portal), and
- *  Blocker has two (back to In progress, or straight to testing). */
+ *  Ready to deploy has none (the client answers in the portal), and Blocked has
+ *  two (back to In progress, or straight to testing). */
 export const NEXT_STAGE: Partial<Record<TicketStatus, TicketStatus>> = {
+  // Confirming in New starts the work: there is no separate "not started" step.
   new: 'in_progress',
-  reopened: 'in_progress',
+  not_started: 'in_progress',
   in_progress: 'waiting_testing',
   waiting_testing: 'on_testing',
-  on_testing: 'waiting_approval',
+  on_testing: 'ready_to_deploy',
 };
 /** Where work can pick up again once a blocker clears. */
 export const UNBLOCK_TO: TicketStatus[] = ['in_progress', 'waiting_testing'];
@@ -184,28 +277,31 @@ export const UNBLOCK_TO: TicketStatus[] = ['in_progress', 'waiting_testing'];
 /**
  * Every move a ticket can make. Forward is only ever one step, so testing can
  * never be skipped. Everything else is one of five off-path moves, each with
- * a reason: rework (back to In progress), pause (Blocker), resolve without
- * the client's approval, cancel, and reopen. The client's own approve and
- * decline in the portal are not listed here; they act on Waiting for approval directly.
+ * a reason: rework (back to In progress), pause (Blocked), resolve without
+ * the client's approval, cancel, and reopen (back to Not started). The client's own approve and
+ * decline in the portal are not listed here; they act on Ready to deploy directly.
  */
 export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
+  // Out of New is QA confirming the AI's read and handing it to the assignee.
   new: ['in_progress', 'canceled'],
-  reopened: ['in_progress', 'canceled'],
+  not_started: ['in_progress', 'blocked', 'canceled'],
   in_progress: ['waiting_testing', 'blocked', 'canceled'],
   blocked: ['in_progress', 'waiting_testing', 'canceled'],
   waiting_testing: ['on_testing', 'in_progress', 'blocked', 'canceled'],
-  on_testing: ['waiting_approval', 'in_progress', 'blocked', 'canceled'],
-  waiting_approval: ['in_progress', 'resolved', 'canceled'],
-  resolved: ['reopened'],
-  canceled: ['reopened'],
+  on_testing: ['ready_to_deploy', 'in_progress', 'blocked', 'canceled'],
+  // The client approves it in the portal (resolved); NXS can take it back or resolve it without them.
+  ready_to_deploy: ['in_progress', 'resolved', 'canceled'],
+  resolved: ['in_progress'],
+  canceled: ['in_progress'],
 };
 export const canTransition = (from: TicketStatus, to: TicketStatus) => TRANSITIONS[from].includes(to);
 
 /** A move back to In progress from further along: work has to be redone. */
-export const isRework = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'waiting_approval');
+export const isRework = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'ready_to_deploy');
 /** Moves that ask "why" in a short note: rework and reopening. Blocker,
  *  resolve without approval and cancel have their own dialogs. */
-export const needsMoveNote = (from: TicketStatus, to: TicketStatus) => isRework(from, to) || to === 'reopened';
+export const isReopen = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'resolved' || from === 'canceled');
+export const needsMoveNote = (from: TicketStatus, to: TicketStatus) => isRework(from, to) || isReopen(from, to);
 
 /**
  * How each move reads from where the ticket is now: `title` names what the
@@ -213,15 +309,16 @@ export const needsMoveNote = (from: TicketStatus, to: TicketStatus) => isRework(
  * does or asks for (used in the Move to menu), `ask` is the dialog's question.
  */
 export function moveLabel(from: TicketStatus, to: TicketStatus): { title: string; hint: string; ask: string } {
-  if (to === 'blocked') return { title: 'Blocker', hint: 'Pauses the work. Asks what is blocking it.', ask: 'What’s blocking it?' };
+  if (to === 'blocked') return { title: 'Blocked', hint: 'Pauses the work. Asks what is blocking it.', ask: 'What’s blocking it?' };
   if (to === 'canceled') return { title: 'Cancel ticket', hint: 'Ends the ticket. Asks why.', ask: 'Why is it canceled?' };
   if (to === 'resolved') return { title: 'Resolve without approval', hint: 'Skips the client’s approval. Asks why.', ask: 'Why skip the approval?' };
-  if (to === 'reopened') return { title: 'Reopen', hint: 'Back to work. Asks why.', ask: 'Why reopen it?' };
-  if (to === 'waiting_approval') return { title: 'Send for approval', hint: 'Testing passed. Sends the client a note and proof.', ask: 'What should the client check?' };
+  if (from === 'new' && to === 'in_progress') return { title: 'Confirm and assign', hint: 'Sends the RCA to the client and starts the work.', ask: '' };
+  if (isReopen(from, to)) return { title: 'Reopen', hint: 'Back to the assignee, in progress. Asks why.', ask: 'Why reopen it?' };
+  if (to === 'ready_to_deploy') return { title: 'Ready to deploy', hint: 'Testing passed. Sends the client a note to approve it going live.', ask: 'What should the client check?' };
   if (from === 'blocked') return { title: 'Unblock', hint: to === 'in_progress' ? 'Clears the blocker. Work carries on.' : 'Clears the blocker. The fix is ready to test.', ask: '' };
   if (from === 'on_testing') return { title: 'Testing failed', hint: 'Testing failed. Asks what failed.', ask: 'What failed in testing?' };
   if (from === 'waiting_testing' && to === 'in_progress') return { title: 'Not ready for testing', hint: 'Not ready to test yet. Asks why.', ask: 'Why isn’t it ready for testing?' };
-  if (from === 'waiting_approval') return { title: 'Needs more work', hint: 'Takes it back from the client. Asks why.', ask: 'What needs more work?' };
+  if (from === 'ready_to_deploy') return { title: 'Needs more work', hint: 'Takes it back from the client before it goes live. Asks why.', ask: 'What needs more work?' };
   if (to === 'in_progress') return { title: 'Start work', hint: 'Starts the work. Asks who owns it if nobody does.', ask: '' };
   if (to === 'waiting_testing') return { title: 'Send to testing', hint: 'The fix is ready to test.', ask: '' };
   if (to === 'on_testing') return { title: 'Start testing', hint: 'Someone is testing the fix now.', ask: '' };
@@ -229,12 +326,12 @@ export function moveLabel(from: TicketStatus, to: TicketStatus): { title: string
 }
 
 /** Stages that need a named support member before a ticket can enter them.
- *  Assigning someone to a New or Reopened ticket starts the work. */
+ *  Starting the work needs someone to do it. */
 export const NEEDS_ASSIGNEE: TicketStatus[] = ['in_progress'];
 
 /* ---------- Severity ---------- */
 
-const RANK: Record<Severity, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+const RANK: Record<Severity, number> = { low: 1, medium: 2, critical: 3 };
 export const severityRank = (s: Severity | null) => (s ? RANK[s] : 0);
 
 /* ---------- Roles and permissions ---------- */
@@ -286,28 +383,28 @@ export const clientVisibleActivity = (t: Ticket) => t.activity.filter((a) => a.v
 export const PORTAL_STATUS_LABEL: Record<TicketStatus, string> = {
   // From the client's side: they sent it in; NXS hasn't started yet.
   new: 'Submitted',
-  reopened: 'Reopened',
+  not_started: 'In progress',
   in_progress: 'In progress',
   blocked: 'In progress',
   waiting_testing: 'In progress',
   on_testing: 'In progress',
-  waiting_approval: 'Ready for your review',
-  resolved: 'Resolved',
+  ready_to_deploy: 'Ready to deploy',
+  // The client's Deploy is what resolves it.
+  resolved: 'Deployed',
   canceled: 'Canceled',
 };
 
 /** The stage a client sees. Blocked and testing are NXS's own steps inside
  *  "In progress", so the portal never shows them. */
-export const portalStatus = (s: TicketStatus): TicketStatus => (s === 'blocked' || s === 'waiting_testing' || s === 'on_testing' ? 'in_progress' : s);
+export const portalStatus = (s: TicketStatus): TicketStatus => (s === 'not_started' || s === 'blocked' || s === 'waiting_testing' || s === 'on_testing' ? 'in_progress' : s);
 /** Stages a client can see, in workflow order. */
 export const PORTAL_STATUSES: TicketStatus[] = STATUSES.filter((s) => portalStatus(s) === s);
 
 /** What each severity means to the person reporting it. */
 export const PORTAL_SEVERITY_HINT: Record<Severity, string> = {
-  critical: 'Down or unusable for everyone.',
-  high: 'A key feature is broken, with no workaround.',
-  medium: 'Something is wrong, but there is a workaround.',
-  low: 'A small issue or a change request.',
+  critical: 'Down, data at risk, or a live campaign blocked.',
+  medium: 'A major function is disrupted.',
+  low: 'Limited impact, or there is a workaround.',
 };
 
 /* ---------- Request types ---------- */

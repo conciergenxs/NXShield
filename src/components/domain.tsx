@@ -1,5 +1,4 @@
-import { Link } from 'react-router-dom';
-import { Ban, Briefcase, CircleCheck, CircleX, ClipboardList, Clock, CodeXml, FlaskConical, HardDrive, Hourglass, Inbox, ListChecks, Loader, OctagonAlert, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { Ban, Briefcase, CircleCheck, CircleDashed, CircleX, ClipboardList, Clock, CodeXml, FlaskConical, Hourglass, Inbox, ListChecks, Loader, OctagonAlert, Rocket, TriangleAlert, type LucideIcon, ShieldOff } from 'lucide-react';
 import type { AssetStatus, Category, Client, Severity, TeamMember, Ticket, TicketStatus } from '../types';
 import { ASSET_STATUS_LABEL, CATEGORY_LABEL, NO_PRIORITY_LABEL, SEVERITY_LABEL, STATUS_LABEL, portalStatus } from '../lib/domain';
 import { fmtDuration } from '../lib/format';
@@ -11,16 +10,16 @@ import { statusLabelFor, useTicketScope } from './scope';
 /* ---------- Severity ---------- */
 
 /* A warm ramp from most to least urgent; the bar icon repeats the level. */
-const SEVERITY_TONE: Record<Severity, Tone> = { critical: 'red', high: 'orange', medium: 'yellow', low: 'neutral' };
-const SEVERITY_BARS: Record<Severity, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+export const SEVERITY_TONE: Record<Severity, Tone> = { critical: 'red', medium: 'orange', low: 'yellow' };
+const SEVERITY_BARS: Record<Severity, number> = { low: 1, medium: 2, critical: 3 };
 
-/** Four ascending bars; the number filled encodes the level without relying on colour. */
+/** Three ascending bars; the number filled encodes the level without relying on colour. */
 export function SeverityBars({ level }: { level: Severity }) {
   const n = SEVERITY_BARS[level];
   return (
-    <svg className="sev-bars" width="14" height="12" viewBox="0 0 14 12" aria-hidden>
-      {[0, 1, 2, 3].map((i) => (
-        <rect key={i} x={i * 3.7} y={9 - i * 3} width="2.6" height={3 + i * 3} rx="1" fill="currentColor" opacity={i < n ? 1 : 0.22} />
+    <svg className="sev-bars" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <rect key={i} x={i * 4.2} y={8 - i * 4} width="3" height={4 + i * 4} rx="1" fill="currentColor" opacity={i < n ? 1 : 0.22} />
       ))}
     </svg>
   );
@@ -40,28 +39,29 @@ export function SeverityBadge({ severity }: { severity: Severity | null }) {
 /** One icon per stage, used where a stage heads a group of tickets. */
 export const STATUS_ICON: Record<TicketStatus, LucideIcon> = {
   new: Inbox,
-  reopened: RotateCcw,
+  not_started: CircleDashed,
   in_progress: Loader,
   blocked: OctagonAlert,
   waiting_testing: ListChecks,
   on_testing: FlaskConical,
-  waiting_approval: Hourglass,
+  ready_to_deploy: Rocket,
   resolved: CircleCheck,
   canceled: Ban,
 };
 
 /* One colour per stage, none shared: blue for incoming, red when it comes
    back, pink while someone works on it, orange when it is stuck, indigo and
-   teal through testing, yellow while it waits on the client, purple when
-   solved (the positive colour used across the dashboard), grey if canceled. */
+   teal through testing, green once it is ready to go live, yellow while it
+   waits on the client, purple when solved (the positive colour used across
+   the dashboard), grey if canceled. */
 export const STATUS_TONE: Record<TicketStatus, Tone> = {
   new: 'blue',
-  reopened: 'red',
+  not_started: 'neutral',
   in_progress: 'pink',
   blocked: 'orange',
   waiting_testing: 'indigo',
   on_testing: 'teal',
-  waiting_approval: 'yellow',
+  ready_to_deploy: 'yellow',
   resolved: 'purple',
   canceled: 'neutral',
 };
@@ -95,7 +95,7 @@ export function AssetStatusBadge({ status, plain }: { status: AssetStatus; plain
 
 /* ---------- Category ---------- */
 
-const CATEGORY_ICON = { tech: CodeXml, business: Briefcase, operational: ClipboardList, hardware: HardDrive } as const;
+const CATEGORY_ICON = { tech: CodeXml, business: Briefcase, operational: ClipboardList, } as const;
 
 export function CategoryLabel({ category, short }: { category: Category; short?: boolean }) {
   const Icon = CATEGORY_ICON[category];
@@ -109,7 +109,7 @@ export function CategoryLabel({ category, short }: { category: Category; short?:
 
 /* ---------- SLA ---------- */
 
-export const SLA_TONE: Record<SlaState, Tone> = { within: 'purple', at_risk: 'orange', breached: 'red', met: 'purple', missed: 'red' };
+export const SLA_TONE: Record<SlaState, Tone> = { within: 'purple', at_risk: 'orange', breached: 'red', met: 'purple', missed: 'red', excluded: 'neutral' };
 
 export function slaText(clock: SlaClock): string {
   switch (clock.state) {
@@ -122,31 +122,42 @@ export function slaText(clock: SlaClock): string {
       return 'Met';
     case 'missed':
       return `${fmtDuration(clock.remainingMs)} late`;
+    case 'excluded':
+      return 'Outside SLA';
   }
 }
 
-const SLA_ICON = { within: Clock, at_risk: TriangleAlert, breached: CircleX, met: CircleCheck, missed: CircleX } as const;
+const SLA_ICON = { within: Clock, at_risk: TriangleAlert, breached: CircleX, met: CircleCheck, missed: CircleX, excluded: ShieldOff } as const;
 
 /**
  * The SLA clock: a thin meter showing how much of the target has been used,
  * with the time remaining beside it. Used wherever a ticket is listed.
  */
-export function SlaIndicator({ sla, showLabel }: { sla: TicketSla; showLabel?: boolean }) {
+/** The clock a ticket runs against, in the words used on every page:
+ *  Reply (the first response), QA (while in testing), Fix (the rest). */
+export function clockWord(status: TicketStatus, sla: TicketSla): 'Reply' | 'RCA' | 'Fix' | 'QA' {
+  if (sla.activeLabel === 'First response') return 'Reply';
+  if (sla.activeLabel === 'Initial RCA') return 'RCA';
+  return status === 'waiting_testing' || status === 'on_testing' ? 'QA' : 'Fix';
+}
+
+export function SlaIndicator({ sla, status, showLabel }: { sla: TicketSla; status: TicketStatus; showLabel?: boolean }) {
   const clock = sla.active;
   const running = clock.completedAt == null;
   const Icon = SLA_ICON[clock.state];
-  const label = `${sla.activeLabel}: ${SLA_STATE_LABEL[clock.state]}, ${slaText(clock)}`;
+  const word = clockWord(status, sla);
+  const label = `${word}: ${SLA_STATE_LABEL[clock.state]}, ${slaText(clock)}`;
   return (
     <span className={cx('sla', `tone-${SLA_TONE[clock.state]}`)} title={label} aria-label={label}>
       <Icon size={14} aria-hidden className="sla-icon" />
       <span className="sla-body">
         <span className="sla-text">
-          {showLabel && running && <span className="sla-kind">{sla.activeLabel === 'First response' ? 'Response' : 'Resolve'}</span>}
+          {showLabel && running && <span className="sla-kind">{word}</span>}
           {slaText(clock)}
         </span>
         {running && (
           <span className="sla-meter" aria-hidden>
-            <span style={{ width: `${Math.min(100, Math.max(4, clock.used * 100))}%` }} />
+            <span style={{ width: `${clock.state === 'breached' ? 100 : Math.min(100, Math.max(4, (1 - clock.used) * 100))}%` }} />
           </span>
         )}
       </span>
@@ -179,13 +190,9 @@ export function ClientCell({ clientId, link }: { clientId: string; link?: boolea
       <span className="truncate">{client.name}</span>
     </>
   );
-  return link ? (
-    <Link to={`/clients/${client.id}`} className="person link-quiet" onClick={(e) => e.stopPropagation()}>
-      {inner}
-    </Link>
-  ) : (
-    <span className="person">{inner}</span>
-  );
+  // Clients have no page of their own; they are managed in Settings.
+  void link;
+  return <span className="person">{inner}</span>;
 }
 
 export function Assignee({ member, size = 24, showLevel }: { member: TeamMember | undefined; size?: number; showLevel?: boolean }) {

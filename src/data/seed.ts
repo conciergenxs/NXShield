@@ -13,26 +13,27 @@ export const HOUR = 60 * MIN;
 export const DAY = 24 * HOUR;
 
 /**
- * Mock data is anchored to the moment the app first loads so countdowns stay live.
- * The anchor is kept for the browser session (up to three hours) so ticket IDs
- * and timings survive a page refresh.
+ * The prototype runs on a frozen clock: every visit opens on the same moment,
+ * Friday 20 November 2026 at 10:00, so countdowns, ages and ticket IDs read the
+ * same every time and nothing drifts overdue while someone is reviewing it.
  */
-function resolveAnchor(): number {
-  const key = 'nxshield.anchor';
-  const fresh = Date.now();
-  try {
-    const stored = Number(sessionStorage.getItem(key));
-    if (stored && fresh - stored < 3 * 60 * 60_000 && fresh >= stored) return stored;
-    sessionStorage.setItem(key, String(fresh));
-  } catch {
-    // Storage unavailable: fall back to a fresh anchor.
-  }
-  return fresh;
-}
+export const LOADED_AT = new Date(2026, 10, 20, 10, 0, 0).getTime();
 
-export const LOADED_AT = resolveAnchor();
+const BOOTED = Date.now();
+/** "Now" for things people do in the prototype: the frozen moment plus the time spent on the page. */
+export const clock = () => LOADED_AT + (Date.now() - BOOTED);
 
-export const CURRENT_USER_ID = 'tm-raka';
+/** Who the dashboard opens as when the sign-in email matches nobody on the team. */
+export const CURRENT_USER_ID = 'tm-fajar';
+
+/** Who picks up new tickets: every ticket goes to QA first, then to frontend or backend. */
+export const QA_ID = 'tm-fajar';
+export const FRONTEND_ID = 'tm-alfiana';
+export const BACKEND_ID = 'tm-mega';
+/** Business issues go to the business PICs, whoever has fewer open. */
+export const BUSINESS_IDS = ['tm-bhisma', 'tm-adra'];
+/** The PICs who log tickets for a client who reported outside the portal. */
+export const LOGGER_IDS = ['tm-riyan', 'tm-sarah'];
 
 export const departments: Department[] = [
   { id: 'support', name: 'Support Desk' },
@@ -43,18 +44,17 @@ export const departments: Department[] = [
   { id: 'accounts', name: 'Account Management' },
 ];
 
+/** The NXS PICs named in the SLA docs. Tech and Operational go to Riyan, Sarah,
+ *  Mega, Alfi and Fajar; Business also to Bhisma and Adra. Fajar is QA, Alfiana
+ *  frontend and Mega backend. */
 export const team: TeamMember[] = [
-  { id: 'tm-raka', name: 'Raka Pratama', title: 'Support Lead', role: 'admin', level: 'L3', departmentId: 'support', email: 'raka.pratama@nxs.example', phone: '+62 811-5550-101', availability: 'available', skills: ['tech', 'business', 'operational'] },
-  { id: 'tm-dinda', name: 'Dinda Maheswari', title: 'Support Agent', role: 'support_agent', level: 'L1', departmentId: 'support', email: 'dinda.maheswari@nxs.example', phone: '+62 811-5550-102', availability: 'available', skills: ['tech', 'operational'] },
-  { id: 'tm-yoga', name: 'Yoga Saputra', title: 'Support Agent', role: 'support_agent', level: 'L1', departmentId: 'support', email: 'yoga.saputra@nxs.example', phone: '+62 811-5550-103', availability: 'busy', skills: ['tech', 'operational'] },
-  { id: 'tm-tasya', name: 'Tasya Amelia', title: 'Support Agent', role: 'support_agent', level: 'L1', departmentId: 'support', email: 'tasya.amelia@nxs.example', phone: '+62 811-5550-104', availability: 'off_shift', skills: ['operational', 'business'] },
-  { id: 'tm-nadia', name: 'Nadia Putri', title: 'Frontend Engineer', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'nadia.putri@nxs.example', phone: '+62 811-5550-105', availability: 'available', skills: ['tech'] },
-  { id: 'tm-bima', name: 'Bima Santoso', title: 'Backend Engineer', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'bima.santoso@nxs.example', phone: '+62 811-5550-106', availability: 'busy', skills: ['tech'] },
-  { id: 'tm-andre', name: 'Andre Wijaya', title: 'Principal Engineer', role: 'support_lead', level: 'L3', departmentId: 'engineering', email: 'andre.wijaya@nxs.example', phone: '+62 811-5550-107', availability: 'available', skills: ['tech'] },
-  { id: 'tm-kevin', name: 'Kevin Halim', title: 'Infrastructure Engineer', role: 'support_agent', level: 'L3', departmentId: 'infra', email: 'kevin.halim@nxs.example', phone: '+62 811-5550-108', availability: 'available', skills: ['tech', 'hardware'] },
-  { id: 'tm-gilang', name: 'Gilang Ramadhan', title: 'Data Analyst', role: 'support_agent', level: 'L2', departmentId: 'data', email: 'gilang.ramadhan@nxs.example', phone: '+62 811-5550-109', availability: 'available', skills: ['operational', 'tech'] },
-  { id: 'tm-fajar', name: 'Fajar Nugroho', title: 'Field Technician', role: 'support_agent', level: 'L2', departmentId: 'field', email: 'fajar.nugroho@nxs.example', phone: '+62 811-5550-110', availability: 'away', skills: ['hardware'] },
-  { id: 'tm-sari', name: 'Sari Wulandari', title: 'Account Manager', role: 'support_lead', level: 'L2', departmentId: 'accounts', email: 'sari.wulandari@nxs.example', phone: '+62 811-5550-111', availability: 'available', skills: ['business'] },
+  { id: 'tm-fajar', name: 'Fajar Saputra', title: 'QA Engineer', role: 'admin', level: 'L2', departmentId: 'engineering', email: 'fajar.saputra@nxs.example', phone: '+62 811-5550-110', availability: 'available', skills: ['tech', 'business', 'operational'] },
+  { id: 'tm-alfiana', name: 'Alfiana Cendani', title: 'Frontend Engineer', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'alfiana.cendani@nxs.example', phone: '+62 811-5550-105', availability: 'available', skills: ['tech', 'business', 'operational'] },
+  { id: 'tm-mega', name: 'Mega Arimerta', title: 'Backend Engineer', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'mega.arimerta@nxs.example', phone: '+62 811-5550-106', availability: 'available', skills: ['tech', 'business', 'operational'] },
+  { id: 'tm-riyan', name: 'Riyan', title: 'Tech, Business and Operational PIC', role: 'support_lead', level: 'L3', departmentId: 'engineering', email: 'riyan@nxs.example', phone: '+62 811-5550-101', availability: 'available', skills: ['tech', 'business', 'operational'] },
+  { id: 'tm-sarah', name: 'Sarah', title: 'Tech, Business and Operational PIC', role: 'support_lead', level: 'L3', departmentId: 'engineering', email: 'sarah@nxs.example', phone: '+62 811-5550-102', availability: 'available', skills: ['tech', 'business', 'operational'] },
+  { id: 'tm-bhisma', name: 'Bhisma', title: 'Business PIC', role: 'support_agent', level: 'L2', departmentId: 'accounts', email: 'bhisma@nxs.example', phone: '+62 811-5550-103', availability: 'available', skills: ['business'] },
+  { id: 'tm-adra', name: 'Adra', title: 'Business PIC', role: 'support_agent', level: 'L2', departmentId: 'accounts', email: 'adra@nxs.example', phone: '+62 811-5550-104', availability: 'available', skills: ['business'] },
 ];
 
 /** One set of service levels for every client, from the SLA table. Times run around the clock for now. */
@@ -63,14 +63,19 @@ export const policies: SlaPolicy[] = [
     id: 'pol-standard',
     name: 'NXS service levels',
     description: 'The same for every client.',
-    coverage: 'P1 around the clock; P2 to P4 in business hours',
-    atRiskPercent: 75,
+    coverage: 'Around the clock, every priority',
+    // Orange once half the time is used: on a 1-hour reply that is the last 30 minutes.
+    atRiskPercent: 50,
     isDefault: true,
+    // From the SLA: first reply within 1 hour for every priority; P2 fixed
+    // within 1 day, P3 within 3 days. P1's fix time is set by its diagnosis;
+    // until then it runs on 8 hours.
     targets: {
-      critical: { firstResponseMins: 60, resolutionMins: 8 * 60 },
-      high: { firstResponseMins: 4 * 60, resolutionMins: 24 * 60 },
-      medium: { firstResponseMins: 24 * 60, resolutionMins: 72 * 60 },
-      low: { firstResponseMins: 48 * 60, resolutionMins: 120 * 60 },
+      // The SLA table: reply T+1, initial RCA T+3; fix per priority (P1 from its RCA, 8h until set).
+      // The full RCA goes to the client with every fix, so it is due with it. One business day is 24h.
+      critical: { firstResponseMins: 60, rcaMins: 180, resolutionMins: 8 * 60 },
+      medium: { firstResponseMins: 60, rcaMins: 180, resolutionMins: 24 * 60 },
+      low: { firstResponseMins: 60, rcaMins: 180, resolutionMins: 72 * 60 },
     },
   },
 ];
@@ -91,24 +96,29 @@ export const clients: Client[] = [
   {
     id: 'cml', name: 'CML', code: 'CML', industry: 'Consumer goods & e-commerce', city: 'Jakarta Selatan',
     logo: { initials: 'CM', bg: '#FCE8EF', fg: '#A8325E' },
-    contact: { name: 'Andreas Wibisono', title: 'Head of Digital Marketing', email: 'andreas.wibisono@cml.example', phone: '+62 812-7710-2140' },
-    slaPolicyId: 'pol-standard', accountManagerId: 'tm-sari', since: '2023-04-01',
+    contact: { name: 'Lucky Salim', title: 'Tech PIC', email: 'lucky.salim@cml.example', phone: '+62 812-7710-2140' },
+    slaPolicyId: 'pol-standard', accountManagerId: 'tm-riyan', since: '2023-04-01',
+    // The JTI PICs from the SLA docs, who log tickets for their own category.
     users: users('cml', 'cml.example', [
-      ['Andreas Wibisono', 'Head of Digital Marketing', 'client_admin'],
-      ['Nabila Rahmawati', 'E-commerce Manager', 'client_user'],
-      ['Teguh Prasetyo', 'Marketing Analyst', 'client_user'],
+      ['Lucky Salim', 'Tech PIC', 'client_admin'],
+      ['Friza', 'Tech PIC, hardware', 'client_user'],
+      ['Bagus', 'Tech PIC, hardware', 'client_user'],
+      ['Nathan', 'Business and Operational PIC', 'client_user'],
+      ['Kinan', 'Business and Operational PIC', 'client_user'],
     ]),
   },
   {
     id: 'aroma', name: 'Aroma Abadi', code: 'ARA', industry: 'Fragrance & personal care', city: 'Jakarta Barat',
     logo: { initials: 'AA', bg: '#EAEAF7', fg: '#3D3F8F' },
-    contact: { name: 'Melissa Hartanto', title: 'Head of Omnichannel', email: 'melissa.hartanto@aromaabadi.example', phone: '+62 812-7711-3320' },
-    slaPolicyId: 'pol-standard', accountManagerId: 'tm-sari', since: '2024-02-12',
+    contact: { name: 'Lucky Salim', title: 'Tech PIC', email: 'lucky.salim@aromaabadi.example', phone: '+62 812-7711-3320' },
+    slaPolicyId: 'pol-standard', accountManagerId: 'tm-riyan', since: '2024-02-12',
+    // Same SLA and the same PIC set as CML for now.
     users: users('aroma', 'aromaabadi.example', [
-      ['Melissa Hartanto', 'Head of Omnichannel', 'client_admin'],
-      ['Dewi Kartika', 'Training & Development Manager', 'client_user'],
-      ['Budi Santosa', 'Retail Operations Lead', 'client_user'],
-      ['Siska Amalia', 'CRM & Loyalty Specialist', 'client_user'],
+      ['Lucky Salim', 'Tech PIC', 'client_admin'],
+      ['Friza', 'Tech PIC, hardware', 'client_user'],
+      ['Bagus', 'Tech PIC, hardware', 'client_user'],
+      ['Nathan', 'Business and Operational PIC', 'client_user'],
+      ['Kinan', 'Business and Operational PIC', 'client_user'],
     ]),
   },
 ];
@@ -116,10 +126,10 @@ export const clients: Client[] = [
 const h = (hoursAgo: number) => LOADED_AT - hoursAgo * HOUR;
 
 export const assets: Asset[] = [
-  { id: 'AST-CML-01', ownerId: 'tm-nadia', clientId: 'cml', name: 'Consumer Website', category: 'consumer_website', url: 'https://www.cml.example', environment: 'Production', status: 'degraded', statusNote: 'Payment confirmation is slow for some orders.', statusChangedAt: h(5.6), uptime30d: 99.62, monitor: { method: 'health_url', endpoint: 'https://www.cml.example/health', intervalMins: 1, hasToken: false } },
-  { id: 'AST-CML-02', ownerId: 'tm-gilang', clientId: 'cml', name: 'Marketing-Tech Dashboard', category: 'marketing_dashboard', url: 'https://martech.cml.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(310), uptime30d: 99.95, monitor: { method: 'status_api', endpoint: 'https://martech.cml.example/api/status', intervalMins: 5, hasToken: true } },
-  { id: 'AST-ARA-01', ownerId: 'tm-bima', clientId: 'aroma', name: 'Omnichannel Dashboard', category: 'omnichannel_dashboard', url: 'https://omni.aromaabadi.example', environment: 'Production', status: 'degraded', statusNote: 'Marketplace orders are syncing late after the connector upgrade.', statusChangedAt: h(1.4), uptime30d: 99.48, monitor: { method: 'status_api', endpoint: 'https://omni.aromaabadi.example/api/status', intervalMins: 1, hasToken: true } },
-  { id: 'AST-ARA-02', ownerId: 'tm-yoga', clientId: 'aroma', name: 'LMS App', category: 'lms_app', url: 'https://learn.aromaabadi.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(520), uptime30d: 99.97, monitor: { method: 'uptime_service', endpoint: 'https://uptime.betterstack.example/api/v2/monitors/48213', intervalMins: 5, hasToken: true } },
+  { id: 'AST-CML-01', ownerId: 'tm-alfiana', clientId: 'cml', name: 'Consumer Website', category: 'consumer_website', url: 'https://www.cml.example', environment: 'Production', status: 'degraded', statusNote: 'Payment confirmation is slow for some orders.', statusChangedAt: h(5.6), uptime30d: 99.62, monitor: { method: 'health_url', endpoint: 'https://www.cml.example/health', intervalMins: 1, hasToken: false } },
+  { id: 'AST-CML-02', ownerId: 'tm-mega', clientId: 'cml', name: 'Marketing-Tech Dashboard', category: 'marketing_dashboard', url: 'https://martech.cml.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(310), uptime30d: 99.95, monitor: { method: 'status_api', endpoint: 'https://martech.cml.example/api/status', intervalMins: 5, hasToken: true } },
+  { id: 'AST-ARA-01', ownerId: 'tm-mega', clientId: 'aroma', name: 'Omnichannel Dashboard', category: 'omnichannel_dashboard', url: 'https://omni.aromaabadi.example', environment: 'Production', status: 'degraded', statusNote: 'Marketplace orders are syncing late after the connector upgrade.', statusChangedAt: h(1.4), uptime30d: 99.48, monitor: { method: 'status_api', endpoint: 'https://omni.aromaabadi.example/api/status', intervalMins: 1, hasToken: true } },
+  { id: 'AST-ARA-02', ownerId: 'tm-alfiana', clientId: 'aroma', name: 'LMS App', category: 'lms_app', url: 'https://learn.aromaabadi.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(520), uptime30d: 99.97, monitor: { method: 'uptime_service', endpoint: 'https://uptime.betterstack.example/api/v2/monitors/48213', intervalMins: 5, hasToken: true } },
 ];
 
 export const notificationRules: NotificationRule[] = [

@@ -1,159 +1,104 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDownRight, ArrowUpRight, CircleCheck, CircleX, Ticket as TicketIcon, TriangleAlert } from 'lucide-react';
-import type { AssetStatus } from '../types';
-import { CATEGORIES, isOpen } from '../lib/domain';
-import { fmtDuration, greeting, pct, startOfDay } from '../lib/format';
-import { activitySeries, doneAt, openAt, type RangeDays } from '../lib/stats';
+import { ChevronDown, CircleAlert, CircleCheck, FlaskConical, Inbox, ListChecks, Loader, OctagonAlert, CircleDashed, type LucideIcon } from 'lucide-react';
+import type { Asset, AssetStatus, Ticket } from '../types';
+import { ASSET_STATUS_LABEL, isOpen } from '../lib/domain';
+import { fmtDateYear, fmtDuration, greeting } from '../lib/format';
+import { uptimeHistory, uptimeLevel, uptimeOver } from '../lib/uptime';
+import type { TicketSla } from '../lib/sla';
 import { useStore } from '../store';
-import { CHART, Gauge, Sparkline, TickMeter, type GaugePart } from '../components/charts';
-import { AssetStatusBadge, CategoryLabel, SlaIndicator } from '../components/domain';
-import { TicketTable } from '../components/TicketTable';
-import { Card, CardHeader, Select, cx } from '../components/ui';
+import { ClientLogo, SeverityBadge } from '../components/domain';
+import { Avatar, Badge, cx, type Tone } from '../components/ui';
 
-const DAY = 24 * 60 * 60_000;
-const ASSET_ORDER: AssetStatus[] = ['outage', 'degraded', 'unknown', 'maintenance', 'operational'];
-function Trend({ value, suffix = '', goodWhen, children }: { value: number; suffix?: string; goodWhen: 'up' | 'down'; children: string }) {
-  if (value === 0) return <span className="trend">No change {children}</span>;
-  const up = value > 0;
-  const good = (goodWhen === 'up') === up;
-  const Icon = up ? ArrowUpRight : ArrowDownRight;
-  return (
-    <span className="trend">
-      <span className={cx('trend-value', good ? 'is-good' : 'is-bad')}>
-        <Icon size={15} aria-hidden />
-        {Math.abs(value)}
-        {suffix}
-        <span className="sr-only">{up ? ' more' : ' fewer'}</span>
-      </span>
-      {children}
-    </span>
-  );
+/* The Overview: only what NXS has to act on, and whether anything is broken.
+
+   Work is split by the job each stage asks for: a first reply (New), the fix
+   (In progress, including not started and blocked tickets), and QA (Testing:
+   waiting for a tester, and being tested by whom). Every card leads with the
+   time left on the clock that matters at that stage and says who holds it.
+   Fixes waiting on the client are left out: it is their turn.
+
+   The three lanes always stay; a lane with nothing in it says so in place.
+   "All tickets" or "My tickets" filters the same view for anyone.
+
+   Asset health reads like a status page: one banner, then each client, with
+   the ones that have a problem opened and healthy ones folded to a line. */
+
+const HOUR = 60 * 60_000;
+/** Cards shown per lane before "View all". */
+const PER_LANE = 4;
+
+interface Lane {
+  key: string;
+  label: string;
+  /** The job this stage asks for. */
+  job: string;
+  icon: LucideIcon;
+  tone: string;
+  match: (t: Ticket) => boolean;
+  /** The clock this stage runs against, as the card names it. */
+  clock: string;
+  /** What an empty lane says, and what would show up in it. */
+  empty: [title: string, text: string];
+  to: string;
 }
 
+const LANES: Lane[] = [
+  {
+    key: 'new',
+    label: 'New',
+    job: 'Needs QA review',
+    icon: Inbox,
+    tone: 'blue',
+    match: (t) => t.status === 'new',
+    clock: 'Reply',
+    empty: ['Nothing to review', 'New tickets wait here until QA confirms the AI’s read.'],
+    to: '/tickets?status=new',
+  },
+  {
+    key: 'work',
+    label: 'In progress',
+    job: 'Being fixed',
+    icon: Loader,
+    tone: 'pink',
+    match: (t) => t.status === 'in_progress' || t.status === 'not_started' || t.status === 'blocked',
+    clock: 'Fix',
+    empty: ['Nothing being fixed', 'Tickets stay here while a fix is underway.'],
+    to: '/tickets?status=in_progress',
+  },
+  {
+    key: 'test',
+    label: 'Testing',
+    job: 'Needs QA',
+    icon: FlaskConical,
+    tone: 'teal',
+    match: (t) => t.status === 'waiting_testing' || t.status === 'on_testing',
+    clock: 'QA',
+    empty: ['Nothing waiting for QA', 'Fixes come here when they are ready to test.'],
+    to: '/tickets?status=waiting_testing',
+  },
+];
+
+type Urgency = 'late' | 'soon' | 'ok';
+const urgencyOf = (s: TicketSla): Urgency => (s.active.state === 'breached' ? 'late' : s.active.remainingMs <= HOUR ? 'soon' : 'ok');
+
+/** When the ticket went on testing, for how long it has been tested. */
+function testingSince(t: Ticket) {
+  return [...t.activity].reverse().find((x) => x.kind === 'status' && x.text.endsWith('to On testing'))?.at;
+}
+/** QA holds a ticket while it is new (checking the AI's read) and while it is in testing. */
+const qaHolds = (t: Ticket) => t.status === 'new' || t.status === 'waiting_testing' || t.status === 'on_testing';
+
+type Scope = 'all' | 'mine';
+
 export function Overview() {
-  const { tickets, now, currentUser, slaOf, assets, clients, clientOf } = useStore();
-  const [range, setRange] = useState<RangeDays>(7);
-
-  const open = useMemo(() => tickets.filter(isOpen), [tickets]);
-  const fresh = useMemo(() => open.filter((t) => t.status === 'new').sort((a, b) => b.createdAt - a.createdAt), [open]);
-
-  const kpi = useMemo(() => {
-    const critical = open.filter((t) => t.severity === 'critical');
-    const awaiting = open.filter((t) => !t.firstRespondedAt);
-    const month = new Date(now);
-    const monthStart = new Date(month.getFullYear(), month.getMonth(), 1).getTime();
-    const prevStart = new Date(month.getFullYear(), month.getMonth() - 1, 1).getTime();
-    const prevEnd = Math.min(prevStart + (now - monthStart), monthStart);
-    let resolvedMonth = 0;
-    let resolvedPrev = 0;
-    for (const t of tickets) {
-      const d = doneAt(t);
-      if (d == null) continue;
-      if (d >= monthStart) resolvedMonth++;
-      else if (d >= prevStart && d < prevEnd) resolvedPrev++;
-    }
-    return {
-      openDelta: open.length - openAt(tickets, now - 7 * DAY),
-      critical,
-      awaiting,
-      oldestAwaiting: awaiting.length ? now - Math.min(...awaiting.map((t) => t.createdAt)) : 0,
-      resolvedMonth,
-      resolvedDelta: resolvedPrev ? Math.round(((resolvedMonth - resolvedPrev) / resolvedPrev) * 100) : 0,
-    };
-  }, [open, tickets, now]);
-
-  const sla = useMemo(() => {
-    const withSla = open.map((t) => ({ t, sla: slaOf(t) }));
-    const count = (s: string) => withSla.filter((x) => x.sla.overall === s).length;
-    return {
-      within: count('within'),
-      atRisk: count('at_risk'),
-      breached: count('breached'),
-      next: withSla
-        .filter((x) => x.sla.overall !== 'breached')
-        .sort((a, b) => a.sla.active.remainingMs - b.sla.active.remainingMs)
-        .slice(0, 4),
-    };
-  }, [open, slaOf]);
-  const criticalAtRisk = kpi.critical.filter((t) => slaOf(t).overall !== 'within').length;
-
-  const week = useMemo(() => activitySeries(tickets, now, 7), [tickets, now]);
-
-  // Tickets received in the period (same window as the ticket list's "Created" filter), by where they are now.
-  const received = useMemo(() => {
-    const start = startOfDay(now) - (range - 1) * DAY;
-    const list = tickets.filter((t) => t.createdAt >= start);
-    const resolved = list.filter((t) => !isOpen(t)).length;
-    const fresh = list.filter((t) => t.status === 'new').length;
-    const parts: GaugePart[] = [
-      { key: 'resolved', label: 'Resolved', value: resolved, color: CHART.resolved },
-      { key: 'progress', label: 'In progress', value: list.length - resolved - fresh, color: CHART.progress },
-      { key: 'new', label: 'New', value: fresh, color: CHART.created },
-    ];
-    return { total: list.length, parts };
-  }, [tickets, now, range]);
-
-  const byCategory = useMemo(
-    () =>
-      CATEGORIES.map((c) => {
-        const list = open.filter((t) => t.category === c);
-        return { c, n: list.length, severe: list.filter((t) => t.severity === 'critical' || t.severity === 'high').length };
-      })
-        .filter((x) => x.n > 0)
-        .sort((a, b) => b.n - a.n),
-    [open],
-  );
-
-  const assetHealth = useMemo(() => {
-    const sorted = [...assets].sort((a, b) => ASSET_ORDER.indexOf(a.status) - ASSET_ORDER.indexOf(b.status));
-    const attention = sorted.filter((a) => a.status !== 'operational');
-    return { operational: assets.length - attention.length, list: (attention.length ? attention : sorted).slice(0, 5), more: Math.max(0, attention.length - 5) };
-  }, [assets]);
-
-  const recent = useMemo(() => [...tickets].sort((a, b) => b.createdAt - a.createdAt).slice(0, 8), [tickets]);
-
-  // The one thing most worth acting on right now, in plain words. New
-  // tickets come first: nobody has looked at them yet.
-  const insight = useMemo(() => {
-    const backlog =
-      kpi.openDelta > 0
-        ? `The backlog grew by ${kpi.openDelta} this week: tickets are arriving faster than they are resolved.`
-        : kpi.openDelta < 0
-          ? `The backlog shrank by ${-kpi.openDelta} this week.`
-          : 'The backlog is level with last week.';
-    if (fresh.length > 0) {
-      const n = fresh.length;
-      const urgent = fresh.filter((t) => t.severity === 'critical' || t.severity === 'high').length;
-      const oldest = now - fresh[fresh.length - 1].createdAt;
-      const urgentText = urgent === 0 ? '' : urgent === n ? `${n === 1 ? 'It is' : 'All are'} critical or high. ` : `${urgent} of them ${urgent === 1 ? 'is' : 'are'} critical or high. `;
-      const breachedText = sla.breached ? ` Separately, ${sla.breached} open ${sla.breached === 1 ? 'ticket has' : 'tickets have'} breached SLA.` : '';
-      return {
-        title: `${n} new ${n === 1 ? 'ticket is' : 'tickets are'} waiting to be assigned.`,
-        body: `${urgentText}The oldest has waited ${fmtDuration(oldest)}.${breachedText}`,
-        cta: n === 1 ? 'Review new ticket' : `Review ${n} new tickets`,
-        to: '/tickets?status=new&sort=created&dir=asc',
-      };
-    }
-    if (sla.breached > 0)
-      return {
-        title: `${sla.breached} open ${sla.breached === 1 ? 'ticket has' : 'tickets have'} breached SLA.`,
-        body: `${sla.atRisk ? `${sla.atRisk} more ${sla.atRisk === 1 ? 'is' : 'are'} close to the deadline. ` : ''}${backlog}`,
-        cta: 'Review breached tickets',
-        to: '/tickets?status=open&sla=breached',
-      };
-    if (sla.atRisk > 0)
-      return {
-        title: `${sla.atRisk} ${sla.atRisk === 1 ? 'ticket is' : 'tickets are'} close to the SLA deadline.`,
-        body: backlog,
-        cta: 'Review at-risk tickets',
-        to: '/tickets?status=open&sla=at_risk',
-      };
-    return { title: 'Every open ticket is within SLA.', body: backlog, cta: 'View open tickets', to: '/tickets?status=open' };
-  }, [fresh, now, sla, kpi.openDelta]);
-
-  const firstName = currentUser.name.split(' ')[0];
-  const openClients = new Set(open.map((t) => t.clientId)).size;
+  const { tickets, now, currentUser } = useStore();
+  const [scope, setScope] = useState<Scope>('all');
+  const all = useMemo(() => tickets.filter((t) => isOpen(t) && LANES.some((l) => l.match(t))), [tickets]);
+  // Mine: what I hold now. QA holds new and testing tickets; the assignee holds the fix.
+  const isMine = (t: Ticket) => (qaHolds(t) ? t.testerId : t.assigneeId) === currentUser.id;
+  const mineCount = all.filter(isMine).length;
+  const work = scope === 'mine' ? all.filter(isMine) : all;
 
   return (
     <div className="page">
@@ -161,225 +106,244 @@ export function Overview() {
         <div className="page-header-row">
           <div className="page-header-text">
             <h1 className="welcome-title">
-              {greeting(now)}, {firstName}.
+              {greeting(now)}, {currentUser.name.split(' ')[0]}.
             </h1>
-            <p className="page-desc">
-              {new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}. {open.length} open {open.length === 1 ? 'ticket' : 'tickets'}
-              {openClients > 0 && ` across ${openClients === clients.length ? '' : `${openClients} of `}${clients.length} ${clients.length === 1 ? 'client' : 'clients'}`}.
-            </p>
+            <p className="page-desc">Tickets that need NXS, soonest deadline first, and how every asset is doing.</p>
+          </div>
+          <div className="view-tabs ovx-scope" role="tablist" aria-label="Whose tickets">
+            {(
+              [
+                ['all', 'All tickets', all.length],
+                ['mine', 'My tickets', mineCount],
+              ] as const
+            ).map(([key, label, n]) => (
+              <button key={key} type="button" role="tab" aria-selected={scope === key} className={cx('view-tab', scope === key && 'is-active')} onClick={() => setScope(key)}>
+                {label}
+                <span className="view-tab-count">{n}</span>
+              </button>
+            ))}
           </div>
         </div>
       </header>
 
-      <div className="overview-grid">
-        {/* Open backlog, with the other headline numbers beneath it */}
-        <section className="card kpi-card" aria-labelledby="kpi-open">
-          <div className="kpi-card-head">
-            <span className="icon-tile" aria-hidden>
-              <TicketIcon size={19} />
-            </span>
-            <h2 className="card-title" id="kpi-open">
-              Total open tickets
-            </h2>
-          </div>
-          <div className="kpi-card-main">
-            <div className="kpi-card-figure">
-              <Link to="/tickets?status=open" className="kpi-big">
-                {open.length}
-              </Link>
-              <Trend value={kpi.openDelta} goodWhen="down">
-                vs 7 days ago
-              </Trend>
-            </div>
-            <Sparkline label="Open tickets at the end of each day, last 7 days" points={week.map((b) => ({ label: b.label, title: b.title, value: b.open }))} />
-          </div>
-          <ul className="mini-stats">
-            <li>
-              <Link to="/tickets?status=open&severity=critical" className="mini-stat">
-                <span className="mini-stat-label">Critical</span>
-                <strong>{kpi.critical.length}</strong>
-                <span className={cx('mini-stat-note', criticalAtRisk > 0 && 'is-bad')}>{kpi.critical.length === 0 ? 'None open' : criticalAtRisk ? `${criticalAtRisk} at risk of SLA` : 'All within SLA'}</span>
-              </Link>
-            </li>
-            <li>
-              <Link to="/tickets?status=open&response=awaiting" className="mini-stat">
-                <span className="mini-stat-label">Awaiting response</span>
-                <strong>{kpi.awaiting.length}</strong>
-                <span className="mini-stat-note">{kpi.awaiting.length ? `Oldest ${fmtDuration(kpi.oldestAwaiting)}` : 'All answered'}</span>
-              </Link>
-            </li>
-            <li>
-              <Link to="/tickets?status=done&range=month" className="mini-stat">
-                <span className="mini-stat-label">Resolved this month</span>
-                <strong>{kpi.resolvedMonth}</strong>
-                <span className={cx('mini-stat-note', kpi.resolvedDelta < 0 && 'is-bad')}>
-                  {kpi.resolvedDelta === 0 ? 'Same as last month' : `${kpi.resolvedDelta > 0 ? '+' : ''}${kpi.resolvedDelta}% vs last month`}
-                </span>
-              </Link>
-            </li>
-          </ul>
-        </section>
-
-        {/* What came in during the period, and where those tickets are now */}
-        <section className="card activity-card" aria-labelledby="activity-title">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title" id="activity-title">
-                Ticket activity
-              </h2>
-              <p className="card-desc">Received this period, by stage</p>
-            </div>
-            <Select
-              size="sm"
-              ariaLabel="Time range"
-              value={String(range) as '7' | '30' | '90'}
-              onChange={(v) => setRange(Number(v) as RangeDays)}
-              options={[
-                { value: '7', label: 'Last 7 days' },
-                { value: '30', label: 'Last 30 days' },
-                { value: '90', label: 'Last 90 days' },
-              ]}
-            />
-          </div>
-          <Gauge parts={received.parts} total={received.total} caption="Tickets received" label={`Tickets received in the last ${range} days, by current stage`} />
-          <ul className="gauge-legend">
-            {received.parts.map((p) => (
-              <li key={p.key}>
-                <span className="legend-key" style={{ background: p.color }} aria-hidden />
-                <span className="gauge-legend-label">{p.label}</span>
-                <strong>{p.value}</strong>
-                <span className="gauge-legend-pct">{pct(p.value, received.total)}%</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        {/* The single most important thing to act on, in plain words */}
-        <section className="insight-card" aria-label="Needs attention">
-          <h2>{insight.title}</h2>
-          <p>{insight.body}</p>
-          <Link to={insight.to} className="btn btn-light">
-            {insight.cta}
-          </Link>
-        </section>
-
-        {/* Deadlines get the wide card: they are what someone acts on next. */}
-        <Card className="sla-card">
-          <CardHeader
-            title="SLA monitoring"
-            description={`${open.length} open tickets against their deadlines`}
-          />
-          <ul className="sla-states">
-            <li>
-              <Link to="/tickets?status=open&sla=within" className="sla-state tone-purple">
-                <CircleCheck size={16} aria-hidden />
-                <span>Within SLA</span>
-                <strong>{sla.within}</strong>
-              </Link>
-            </li>
-            <li>
-              <Link to="/tickets?status=open&sla=at_risk" className="sla-state tone-orange">
-                <TriangleAlert size={16} aria-hidden />
-                <span>Approaching deadline</span>
-                <strong>{sla.atRisk}</strong>
-              </Link>
-            </li>
-            <li>
-              <Link to="/tickets?status=open&sla=breached" className="sla-state tone-red">
-                <CircleX size={16} aria-hidden />
-                <span>Breached</span>
-                <strong>{sla.breached}</strong>
-              </Link>
-            </li>
-          </ul>
-          <h3 className="subhead">Next deadlines</h3>
-          {sla.next.length === 0 ? (
-            <p className="muted">No open deadlines.</p>
-          ) : (
-            <ul className="soft-list">
-              {sla.next.map(({ t, sla: s }) => (
-                <li key={t.id}>
-                  <Link to={`/tickets/${t.id}`} className="soft-row deadline">
-                    <span className="deadline-main">
-                      <span className="truncate deadline-title">{t.title}</span>
-                      <span className="deadline-sub">
-                        <span className="ticket-id">{t.id}</span> {clientOf(t.clientId)?.name}
-                      </span>
-                    </span>
-                    <SlaIndicator sla={s} showLabel />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        {/* Two short lists stacked beside the deadlines. */}
-        <div className="overview-side">
-          <Card className="asset-card">
-            <CardHeader
-              title="Asset health"
-              description={`${assetHealth.operational} of ${assets.length} operational`}
-              action={
-                <Link to="/clients" className="btn btn-secondary btn-sm">
-                  Clients
-                </Link>
-              }
-            />
-            <ul className="asset-list">
-              {assetHealth.list.map((a) => (
-                <li key={a.id}>
-                  <Link to={`/clients/${a.clientId}?tab=assets`} className="asset-row">
-                    <span className="asset-row-name">
-                      <span className="truncate">{a.name}</span>
-                      <span className="muted truncate">{clientOf(a.clientId)?.name}</span>
-                    </span>
-                    <AssetStatusBadge status={a.status} plain />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            {assetHealth.more > 0 && <p className="asset-card-more">{assetHealth.more} more need attention</p>}
-          </Card>
-
-          <Card className="category-card">
-            <CardHeader title="Open tickets by category" description={`Where the ${open.length} open tickets sit`} />
-            {byCategory.length === 0 ? (
-              <p className="muted">No open tickets.</p>
-            ) : (
-              <ul className="cat-list">
-                {byCategory.map(({ c, n, severe }) => (
-                  <li key={c}>
-                    <Link to={`/tickets?status=open&category=${c}`} className="cat-row">
-                      <span className="cat-main">
-                        <span className="cat-name">
-                          <CategoryLabel category={c} short />
-                        </span>
-                        <span className="cat-sub">{severe ? `${severe} critical or high` : 'None critical or high'}</span>
-                      </span>
-                      <TickMeter share={open.length ? n / open.length : 0} />
-                      <span className="cat-count">{n}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+      <section className="ovx-section" aria-label="Tickets that need NXS">
+        <div className="ovx-lanes">
+          {LANES.map((lane) => (
+            <LaneColumn key={lane.key} lane={lane} tickets={work.filter(lane.match)} mine={scope === 'mine'} />
+          ))}
         </div>
+      </section>
 
-        <Card className="recent-card" flush>
-          <CardHeader
-            title="Recent tickets"
-            description="Latest issues raised by clients"
-            action={
-              <Link to="/tickets" className="btn btn-secondary btn-sm">
-                View all tickets
-              </Link>
-            }
-          />
-          <TicketTable tickets={recent} hide={['asset', 'category', 'sla']} />
-        </Card>
-      </div>
+      <StatusPage />
     </div>
+  );
+}
+
+function LaneColumn({ lane, tickets, mine }: { lane: Lane; tickets: Ticket[]; mine: boolean }) {
+  const { slaOf } = useStore();
+  // Soonest deadline first: late ones, then the ones closest to the line.
+  const rows = useMemo(() => tickets.map((t) => ({ t, sla: slaOf(t) })).sort((a, b) => a.sla.active.due - b.sla.active.due), [tickets, slaOf]);
+  const late = rows.filter((r) => urgencyOf(r.sla) === 'late').length;
+  const soon = rows.filter((r) => urgencyOf(r.sla) === 'soon').length;
+  const Icon = lane.icon;
+  return (
+    <section className={cx('ovx-lane', `tone-${lane.tone}`)} aria-labelledby={`ovx-${lane.key}`}>
+      <header className="ovx-lane-head">
+        <span className="ovx-lane-icon" aria-hidden>
+          <Icon size={16} />
+        </span>
+        <span className="ovx-lane-text">
+          <span className="ovx-lane-title" id={`ovx-${lane.key}`}>
+            {lane.label}
+            <span className="ovx-lane-count">{rows.length}</span>
+          </span>
+          <span className="ovx-lane-job">{lane.job}</span>
+        </span>
+        {rows.length > 0 && (late > 0 ? <span className="ovx-tag is-red">{late} late</span> : soon > 0 ? <span className="ovx-tag is-orange">{soon} within 1h</span> : <span className="ovx-tag">On time</span>)}
+      </header>
+
+      {rows.length === 0 ? (
+        <div className="ovx-empty">
+          <span className="ovx-empty-icon" aria-hidden>
+            <CircleCheck size={20} />
+          </span>
+          <p className="ovx-empty-title">{lane.empty[0]}</p>
+          <p className="ovx-empty-text">{mine ? 'Nothing of yours at this stage.' : lane.empty[1]}</p>
+        </div>
+      ) : (
+        <>
+          <ol className="ovx-cards">
+            {rows.slice(0, PER_LANE).map(({ t, sla }) => (
+              <TicketCard key={t.id} t={t} sla={sla} clock={lane.clock} />
+            ))}
+          </ol>
+          <Link to={lane.to} className="ovx-more">
+            {rows.length > PER_LANE ? `View all ${rows.length}` : 'View in Tickets'}
+          </Link>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Stages that set a card apart inside its lane: a tint across the card and a badge, no extra text. */
+const STATE: Partial<Record<Ticket['status'], { label: string; tone: Tone; icon: LucideIcon }>> = {
+  blocked: { label: 'Blocked', tone: 'orange', icon: OctagonAlert },
+  not_started: { label: 'Not started', tone: 'neutral', icon: CircleDashed },
+  waiting_testing: { label: 'Waiting for testing', tone: 'indigo', icon: ListChecks },
+  on_testing: { label: 'On testing', tone: 'teal', icon: FlaskConical },
+};
+
+/** A card: the clock label and priority, the time, the title, then the ticket and who holds it. */
+function TicketCard({ t, sla, clock }: { t: Ticket; sla: TicketSla; clock: string }) {
+  const { clientOf, memberOf, now } = useStore();
+  const u = urgencyOf(sla);
+  const label = u === 'late' ? `${clock} overdue by` : `${clock} due in`;
+  // Who has it now: QA while it is new or in testing, the assignee while it is being fixed.
+  const person = memberOf(qaHolds(t) ? t.testerId : t.assigneeId);
+  const holder = person ? { name: person.name, photo: person.photo } : null;
+  const since = t.status === 'on_testing' ? testingSince(t) : undefined;
+  const blocker = t.status === 'blocked' ? t.blockers[t.blockers.length - 1]?.details : undefined;
+  const state = STATE[t.status];
+  return (
+    <li>
+      <Link to={`/tickets/${t.id}`} className={cx('ovx-card', `is-${u}`, state && `has-state tone-${state.tone}`)}>
+        <span className="ovx-card-top">
+          <span className="ovx-card-label">{label}</span>
+          <SeverityBadge severity={t.severity} />
+        </span>
+        <span className="ovx-card-time">{fmtDuration(Math.abs(sla.active.remainingMs))}</span>
+        <span className="ovx-card-title">{t.title}</span>
+        <span className="ovx-card-foot">
+          <span className="ticket-id">{t.id}</span>
+          <span className="ovx-card-client truncate">{clientOf(t.clientId)?.name}</span>
+          {state && (
+            <span className="ovx-card-state" title={blocker ? `Blocked: ${blocker}` : undefined}>
+              <Badge tone={state.tone} icon={<state.icon size={13} aria-hidden />}>
+                {state.label}
+              </Badge>
+            </span>
+          )}
+        </span>
+        {holder && (
+          <span className="ovx-card-owner">
+            <Avatar name={holder.name} size={22} src={holder.photo} />
+            <span className="truncate">{holder.name}</span>
+            {since != null && <span className="ovx-card-testing">testing {fmtDuration(now - since)}</span>}
+          </span>
+        )}
+      </Link>
+    </li>
+  );
+}
+
+/* ---------- Asset health ---------- */
+
+const RANK: AssetStatus[] = ['outage', 'degraded', 'unknown', 'maintenance', 'operational'];
+const STATE_TONE: Record<AssetStatus, string> = { operational: 'green', degraded: 'orange', outage: 'red', maintenance: 'blue', unknown: 'neutral' };
+
+function StatusPage() {
+  const { assets, clients } = useStore();
+  const issues = assets.filter((a) => a.status !== 'operational');
+  const worst = RANK.find((s) => assets.some((a) => a.status === s)) ?? 'operational';
+  // Clients with a problem first, otherwise in the workspace's own order (CML, then Aroma Abadi).
+  const groups = clients
+    .map((c) => ({ c, list: assets.filter((a) => a.clientId === c.id).sort((a, b) => RANK.indexOf(a.status) - RANK.indexOf(b.status) || a.name.localeCompare(b.name)) }))
+    .sort((a, b) => Number(b.list.some((x) => x.status !== 'operational')) - Number(a.list.some((x) => x.status !== 'operational')));
+
+  return (
+    <section className="ovx-section ovx-health" aria-labelledby="ovx-health">
+      <div className="ovx-section-head">
+        <h2 id="ovx-health" className="section-title">
+          Asset health
+        </h2>
+      </div>
+      <div className="ovx-status">
+        <div className={cx('ovx-banner', `tone-${STATE_TONE[worst]}`)}>
+          <span className="ovx-banner-icon" aria-hidden>
+            {issues.length ? <CircleAlert size={18} /> : <CircleCheck size={18} />}
+          </span>
+          <span className="ovx-banner-text">{issues.length ? `${issues.length} of ${assets.length} assets need attention` : `All ${assets.length} assets operational`}</span>
+        </div>
+        {groups.map(({ c, list }) => (
+          <ClientGroup key={c.id} clientId={c.id} assets={list} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ClientGroup({ clientId, assets }: { clientId: string; assets: Asset[] }) {
+  const { clientOf, now } = useStore();
+  const client = clientOf(clientId)!;
+  const troubled = assets.filter((a) => a.status !== 'operational').length;
+  const [open, setOpen] = useState(troubled > 0);
+  const histories = useMemo(() => assets.map((a) => ({ a, days: uptimeHistory(a, now, 90) })), [assets, now]);
+  const u90 = uptimeOver(histories.flatMap((h) => h.days));
+  const id = `ovx-client-${clientId}`;
+  return (
+    <div className="ovx-group">
+      <button type="button" className="ovx-row ovx-group-head" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+        <ChevronDown size={16} aria-hidden className={cx('ovx-caret', !open && 'is-closed')} />
+        <ClientLogo client={client} size={24} />
+        <span className="ovx-group-name">{client.name}</span>
+        <span className="ovx-group-sub">
+          {assets.length} {assets.length === 1 ? 'asset' : 'assets'}
+        </span>
+        <span className="ovx-row-end">
+          {!open && u90 != null && <span className="ovx-group-uptime">{u90.toFixed(2)}% uptime</span>}
+          <StatePill status={troubled ? 'degraded' : 'operational'} label={troubled ? `${troubled} need attention` : 'Operational'} />
+        </span>
+      </button>
+      {open && (
+        <ul className="ovx-assets" id={id}>
+          {histories.map(({ a, days }) => (
+            <AssetRow key={a.id} asset={a} days={days} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function StatePill({ status, label }: { status: AssetStatus; label?: string }) {
+  return (
+    <span className={cx('ovx-state', `tone-${STATE_TONE[status]}`)}>
+      <span className="ovx-dot" aria-hidden />
+      {label ?? ASSET_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+function AssetRow({ asset, days }: { asset: Asset; days: ReturnType<typeof uptimeHistory> }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const u90 = uptimeOver(days);
+  const shown = hover != null ? days[hover] : null;
+  return (
+    <li className="ovx-asset">
+      <div className="ovx-asset-head">
+        <span className="ovx-asset-name">{asset.name}</span>
+        <StatePill status={asset.status} />
+      </div>
+      <div className="ovx-bars" onMouseLeave={() => setHover(null)} role="img" aria-label={`${asset.name}: ${u90 == null ? 'no data' : `${u90.toFixed(2)}%`} uptime over 90 days`}>
+        {days.map((d, i) => (
+          <span key={d.at} className={cx('uptime-bar', `is-${uptimeLevel(d)}`, hover === i && 'is-hover')} onMouseEnter={() => setHover(i)} />
+        ))}
+      </div>
+      {/* The uptime sits in the middle of the axis; hovering a day shows that day instead. */}
+      <div className="ovx-axis">
+        <span>90 days ago</span>
+        <span className="ovx-axis-rule" aria-hidden />
+        {shown ? (
+          <span className="ovx-axis-mid is-day">
+            {fmtDateYear(shown.at)}: {shown.pct == null ? 'no data' : shown.downMins ? `${fmtDuration(shown.downMins * 60_000)} down` : 'no downtime'}
+          </span>
+        ) : (
+          <span className="ovx-axis-mid">{u90 == null ? 'No data yet' : `${u90.toFixed(2)}% uptime`}</span>
+        )}
+        <span className="ovx-axis-rule" aria-hidden />
+        <span>Today</span>
+      </div>
+    </li>
   );
 }

@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  CircleUser,
   Signal,
   Tag,
   Text,
@@ -19,15 +20,15 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { Ticket, TicketStatus } from '../types';
-import { fmtDate, fmtTime } from '../lib/format';
 import { useStore } from '../store';
 import { CATEGORY_LABEL, OPEN_STATUSES, STATUS_LABEL } from '../lib/domain';
 import { Assignee, ClientCell, STATUS_ICON, STATUS_TONE, SeverityBadge, SlaIndicator, StatusBadge } from './domain';
 import { PORTAL_ORDER, STAFF_ORDER, groupStatusFor, statusLabelFor, useTicketScope } from './scope';
-import { Button, Empty, Select, cx } from './ui';
+import { Avatar, Button, Empty, Select, cx } from './ui';
 import { AssignMenu } from './AssignMenu';
 
-export type TicketColumn = 'id' | 'title' | 'client' | 'asset' | 'category' | 'severity' | 'status' | 'assignee' | 'sla' | 'created';
+/** 'created' is a sort order only (the default), not a column. */
+export type TicketColumn = 'id' | 'title' | 'client' | 'asset' | 'category' | 'severity' | 'status' | 'assignee' | 'sla' | 'reporter' | 'created';
 export interface TicketSort {
   key: TicketColumn;
   dir: 'asc' | 'desc';
@@ -43,6 +44,7 @@ const HEAD: Record<TicketColumn, string> = {
   status: 'Status',
   assignee: 'Assigned to',
   sla: 'SLA',
+  reporter: 'Reported by',
   created: 'Created',
 };
 
@@ -59,6 +61,7 @@ const HEAD_ICON: Record<TicketColumn, LucideIcon> = {
   status: CircleDot,
   assignee: User,
   sla: Timer,
+  reporter: CircleUser,
   created: CalendarDays,
 };
 
@@ -73,13 +76,13 @@ const WIDTH: Partial<Record<TicketColumn, number>> = {
   status: 172,
   assignee: 170,
   sla: 132,
-  created: 124,
+  reporter: 156,
 };
 /* Every cell is one line. The title is the widest column but gives way
    first; everything else keeps its width so dates and badges never wrap. */
 const TITLE_MIN = 210;
 
-const ALL: TicketColumn[] = ['id', 'title', 'client', 'asset', 'category', 'severity', 'status', 'assignee', 'sla', 'created'];
+const ALL: TicketColumn[] = ['id', 'title', 'client', 'asset', 'category', 'severity', 'status', 'assignee', 'sla', 'reporter'];
 
 interface Props {
   tickets: Ticket[];
@@ -125,7 +128,7 @@ function TicketHead({ cols, sort, onSort }: { cols: TicketColumn[]; sort?: Ticke
 
 /** One ticket as a table row. The whole row opens the ticket. */
 function TicketRow({ t, cols }: { t: Ticket; cols: TicketColumn[] }) {
-  const { assetOf, slaOf, memberOf } = useStore();
+  const { assetOf, slaOf, memberOf, reporterOf } = useStore();
   const { portal, ticketPath } = useTicketScope();
   const navigate = useNavigate();
   const open = () => navigate(ticketPath(t.id));
@@ -191,16 +194,26 @@ function TicketRow({ t, cols }: { t: Ticket; cols: TicketColumn[] }) {
           case 'sla':
             return (
               <td key={c} className="col-sla">
-                <SlaIndicator sla={slaOf(t)} />
+                <SlaIndicator sla={slaOf(t)} status={t.status} />
               </td>
             );
-          case 'created':
+          case 'reporter': {
+            const who = reporterOf(t);
             return (
-              <td key={c} className="col-created">
-                {fmtDate(t.createdAt)}
-                <span className="muted">, {fmtTime(t.createdAt)}</span>
+              <td key={c} className="col-reporter">
+                {who ? (
+                  <span className="reporter-cell" title={who.title}>
+                    <Avatar name={who.name} size={24} />
+                    <span className="truncate">{who.name}</span>
+                  </span>
+                ) : (
+                  <span className="muted">—</span>
+                )}
               </td>
             );
+          }
+          case 'created':
+            return null;
         }
       })}
     </tr>

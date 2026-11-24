@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
-import { cx, usePopover } from './ui';
+import { Badge, cx, usePopover, type Tone } from './ui';
 import { fmtDateYear, fromDateInput, startOfDay, toDateInput } from '../lib/format';
 
 /* Custom form controls that open our own popover instead of the browser's:
@@ -285,6 +285,57 @@ export function DatePicker({ id, value, onChange, placeholder, min, today, inval
             })}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Badge select ---------- */
+
+export interface BadgeOption<T extends string> {
+  value: T;
+  label: string;
+  tone: Tone;
+  /** Secondary line inside the menu only. */
+  description?: string;
+}
+
+/**
+ * A value shown as its badge, changeable in place: click the badge, pick
+ * another. Used for properties that read as tags, like sprint and task type.
+ */
+export function BadgeSelect<T extends string>({ id, label, value, options, onChange }: { id?: string; label: string; value: T | undefined; options: BadgeOption<T>[]; onChange: (value: T) => void }) {
+  const { open, setOpen, ref } = usePopover();
+  const current = options.find((o) => o.value === value);
+  const pick = (v: T) => {
+    setOpen(false);
+    if (v !== value) onChange(v);
+  };
+  return (
+    <div className={cx('dropdown badge-select', open && 'is-open')} ref={ref}>
+      <button id={id} type="button" className="badge-select-trigger" aria-haspopup="true" aria-expanded={open} aria-label={`${label}: ${current?.label ?? 'not set'}. Change`} onClick={() => setOpen(!open)}>
+        {current ? <Badge tone={current.tone}>{current.label}</Badge> : <span className="muted">Not set</span>}
+        <ChevronDown size={14} aria-hidden className="badge-select-caret" />
+      </button>
+      {open && (
+        <ul className="dropdown-menu" aria-label={label}>
+          {options.map((o) => {
+            const selected = o.value === value;
+            return (
+              <li key={o.value}>
+                <button type="button" className={cx('dropdown-option', selected && 'is-selected')} aria-pressed={selected} onClick={() => pick(o.value)}>
+                  <span className="dropdown-option-text">
+                    <span className="dropdown-option-label">
+                      <Badge tone={o.tone}>{o.label}</Badge>
+                    </span>
+                    {o.description && <span className="dropdown-option-desc">{o.description}</span>}
+                  </span>
+                  {selected && <Check size={16} aria-hidden className="dropdown-check" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

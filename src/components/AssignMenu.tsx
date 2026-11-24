@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import type { Ticket } from '../types';
-import { AVAILABILITY_LABEL, isOpen } from '../lib/domain';
+import { isOpen } from '../lib/domain';
 import { useStore } from '../store';
 import { Assignee } from './domain';
 import { Avatar, cx } from './ui';
@@ -17,32 +17,41 @@ const MENU_W = 300;
  * The menu is drawn on top of the page, outside any table, so a scrolling
  * table never clips it, and clicks inside it never reach the row underneath.
  */
-export function AssignMenu({ ticket, variant = 'field', id }: { ticket: Ticket; variant?: 'field' | 'cell'; id?: string }) {
-  const { team, openLoad, memberOf, assignTicket, can } = useStore();
+export function AssignMenu({ ticket, variant = 'field', id, role = 'assignee' }: { ticket: Ticket; variant?: 'field' | 'cell'; id?: string; role?: 'assignee' | 'tester' }) {
+  const { team, openLoad, memberOf, assignTicket, setTester, can, currentUser } = useStore();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; up: boolean } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const member = memberOf(ticket.assigneeId);
+  // Handing a ticket on from someone to someone else: who it goes to, and an optional note for them.
+  const [handoff, setHandoff] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const currentId = role === 'tester' ? ticket.testerId : ticket.assigneeId;
+  const member = memberOf(currentId);
 
   // Every opening starts with an empty search and the first person highlighted.
   useEffect(() => {
     if (open) {
       setQuery('');
       setActive(0);
+      setHandoff(null);
+      setNote('');
     }
   }, [open]);
 
   // Place the menu under the trigger, or above it when there is no room below.
-  useLayoutEffect(() => {
-    if (!open || !trigger.current) return;
+  const place = () => {
+    if (!trigger.current) return;
     const r = trigger.current.getBoundingClientRect();
     const up = window.innerHeight - r.bottom < 340 && r.top > window.innerHeight - r.bottom;
     const left = Math.min(Math.max(8, r.left), window.innerWidth - MENU_W - 8);
     setPos({ top: up ? r.top - 6 : r.bottom + 6, left, up });
-  }, [open]);
+  };
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return;
@@ -56,31 +65,59 @@ export function AssignMenu({ ticket, variant = 'field', id }: { ticket: Ticket; 
         trigger.current?.focus();
       }
     };
-    const onMove = () => setOpen(false);
+    // Scrolling the list inside the menu leaves it alone; scrolling the page moves
+    // it along with its trigger, and closes it only once the trigger is out of view.
+    const onScroll = (e: Event) => {
+      if (menu.current?.contains(e.target as Node)) return;
+      const r = trigger.current?.getBoundingClientRect();
+      if (!r || r.bottom < 0 || r.top > window.innerHeight) return setOpen(false);
+      place();
+    };
+    const onResize = () => place();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', onMove, true);
-    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onMove, true);
-      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
     };
   }, [open]);
 
-  if (!can('ticket.assign') || !isOpen(ticket)) return <Assignee member={member} size={variant === 'cell' ? 24 : 22} />;
+  // Leads assign; whoever holds the ticket now, or its QA, can hand it on.
+  const holds = ticket.assigneeId === currentUser.id || ticket.testerId === currentUser.id;
+  if ((!can('ticket.assign') && !holds) || !isOpen(ticket)) return <Assignee member={member} size={variant === 'cell' ? 24 : 22} />;
 
-  // Who can take it now: available first, then the fewest open tickets.
-  const free = (a: string) => (a === 'available' ? 0 : a === 'busy' ? 1 : 2);
-  const ordered = [...team].sort((a, b) => free(a.availability) - free(b.availability) || openLoad(a.id) - openLoad(b.id) || a.name.localeCompare(b.name));
+  // The fewest open tickets first.
+  const ordered = [...team].sort((a, b) => openLoad(a.id) - openLoad(b.id) || a.name.localeCompare(b.name));
   const term = query.trim().toLowerCase();
   const matches = term ? ordered.filter((m) => m.name.toLowerCase().includes(term)) : ordered;
-  const pick = (memberId: string) => {
+  const finish = () => {
     setOpen(false);
     trigger.current?.focus();
-    if (memberId !== ticket.assigneeId) assignTicket(ticket.id, memberId);
   };
+  const pick = (memberId: string) => {
+    if (memberId === currentId) return finish();
+    if (role === 'tester') {
+      setTester(ticket.id, memberId);
+      return finish();
+    }
+    // Moving it off someone asks for an optional note; a first assignment goes straight through.
+    if (ticket.assigneeId) {
+      setHandoff(memberId);
+      return;
+    }
+    assignTicket(ticket.id, memberId);
+    finish();
+  };
+  const confirmHandoff = () => {
+    if (!handoff) return;
+    assignTicket(ticket.id, handoff, undefined, note);
+    finish();
+  };
+  const target = handoff ? memberOf(handoff) : undefined;
   const onSearchKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -120,6 +157,35 @@ export function AssignMenu({ ticket, variant = 'field', id }: { ticket: Ticket; 
             aria-label={`Assign ${ticket.id}`}
             onClick={(e) => e.stopPropagation()}
           >
+            {target ? (
+              <div className="handoff">
+                <p className="handoff-title">
+                  Move it from {member?.name ?? 'nobody'} to {target.name}
+                </p>
+                <label className="handoff-label" htmlFor={`handoff-${ticket.id}`}>
+                  Note for {target.name.split(' ')[0]} (optional)
+                </label>
+                <textarea
+                  id={`handoff-${ticket.id}`}
+                  className="input"
+                  rows={3}
+                  autoFocus
+                  value={note}
+                  placeholder="e.g. This is a frontend issue: the widget renders the data wrong."
+                  onChange={(e) => setNote(e.target.value)}
+                />
+                <p className="handoff-hint">It goes to the internal comments.</p>
+                <div className="handoff-actions">
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setHandoff(null)}>
+                    Back
+                  </button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={confirmHandoff}>
+                    Move to {target.name.split(' ')[0]}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
             <label className="assign-search">
               <Search size={16} aria-hidden />
               <input
@@ -140,7 +206,7 @@ export function AssignMenu({ ticket, variant = 'field', id }: { ticket: Ticket; 
             <div className="assign-list-scroll" id={`assign-list-${ticket.id}`} role="listbox" aria-label="Team">
               {matches.length === 0 && <p className="assign-empty">No one matches “{query.trim()}”.</p>}
               {matches.map((m, i) => {
-                const selected = m.id === ticket.assigneeId;
+                const selected = m.id === currentId;
                 return (
                   <button
                     key={m.id}
@@ -156,13 +222,15 @@ export function AssignMenu({ ticket, variant = 'field', id }: { ticket: Ticket; 
                     <Avatar name={m.name} size={30} src={m.photo} />
                     <span className="assign-option-main">
                       <span className="assign-option-name">{m.name}</span>
-                      <span className={cx('assign-option-status', `is-${m.availability}`)}>{AVAILABILITY_LABEL[m.availability]}</span>
+                      <span className="assign-option-role">{m.title}</span>
                     </span>
                     {selected ? <Check size={16} aria-label="Assigned" className="assign-option-check" /> : <span className="assign-option-load">{openLoad(m.id)} open</span>}
                   </button>
                 );
               })}
             </div>
+              </>
+            )}
           </div>,
           document.body,
         )}

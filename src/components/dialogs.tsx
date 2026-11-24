@@ -1,12 +1,14 @@
-import { useState, type FormEvent, useEffect } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Braces, Check, Globe, ImagePlus, Radar, Search, Trash2, Upload } from 'lucide-react';
-import type { AssetCategory, Attachment, MonitorMethod, TicketStatus } from '../types';
-import { ASSET_CATEGORIES, ASSET_CATEGORY_LABEL, AVAILABILITY_LABEL, UNBLOCK_TO, moveLabel, MONITOR_INTERVALS, MONITOR_METHODS, MONITOR_METHOD_HINT, MONITOR_METHOD_LABEL, STATUS_LABEL } from '../lib/domain';
+import type { AssetCategory, Attachment, MonitorMethod, SlaExclusionKind, TaskType, TicketStatus } from '../types';
+import { SLA_EXCLUSION_HINT, SLA_EXCLUSION_LABEL, ASSET_CATEGORIES, ASSET_CATEGORY_LABEL, AVAILABILITY_LABEL, UNBLOCK_TO, moveLabel, MONITOR_INTERVALS, MONITOR_METHODS, MONITOR_METHOD_HINT, MONITOR_METHOD_LABEL, STATUS_LABEL, TASK_TYPES, TASK_TYPE_LABEL } from '../lib/domain';
 import { useStore } from '../store';
+import { verifiedDraft } from '../lib/rcaAi';
 import { Avatar, Button, Field, Modal, Select, TextArea, cx } from './ui';
 import { RichInput } from './RichInput';
-import { draftDiagnosis } from '../lib/assist';
+import { Dropdown } from './pickers';
+import { clock } from '../data/seed';
 
 export function Dialogs() {
   const { dialog } = useStore();
@@ -16,7 +18,7 @@ export function Dialogs() {
   if (dialog.type === 'block') return <BlockTicketDialog ticketId={dialog.ticketId} />;
   if (dialog.type === 'move-note') return <MoveNoteDialog ticketId={dialog.ticketId} to={dialog.to} />;
   if (dialog.type === 'request-approval') return <RequestApprovalDialog ticketId={dialog.ticketId} />;
-  if (dialog.type === 'start-work') return <StartWorkDialog ticketId={dialog.ticketId} />;
+  if (dialog.type === 'sla-exclusion') return <SlaExclusionDialog ticketId={dialog.ticketId} />;
   if (dialog.type === 'unblock') return <UnblockTicketDialog ticketId={dialog.ticketId} />;
   if (dialog.type === 'add-client') return <AddClientDialog />;
   if (dialog.type === 'add-user') return <AddClientUserDialog clientId={dialog.clientId} />;
@@ -109,7 +111,7 @@ function BlockTicketDialog({ ticketId }: { ticketId: string }) {
 
   return (
     <Modal
-      title="Move to Blocker"
+      title="Move to Blocked"
       description="Work pauses until this clears. Only NXS sees it; the client still sees In progress."
       onClose={close}
       footer={
@@ -118,7 +120,7 @@ function BlockTicketDialog({ ticketId }: { ticketId: string }) {
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="block-ticket">
-            Move to Blocker
+            Move to Blocked
           </Button>
         </>
       }
@@ -133,104 +135,123 @@ function BlockTicketDialog({ ticketId }: { ticketId: string }) {
   );
 }
 
-/* ---------- Start work: what is wrong and how it will be fixed, sent to the client ---------- */
+/* ---------- Outside the SLA: one of the SLA's exclusions applies ---------- */
 
-function StartWorkDialog({ ticketId }: { ticketId: string }) {
-  const { ticketOf, assetOf, reporterOf, changeStatus, setDialog } = useStore();
+const EXCLUSION_KINDS = Object.keys(SLA_EXCLUSION_LABEL) as SlaExclusionKind[];
+
+function SlaExclusionDialog({ ticketId }: { ticketId: string }) {
+  const { ticketOf, setSlaExclusion, setDialog } = useStore();
   const ticket = ticketOf(ticketId);
-  const [drafting, setDrafting] = useState(true);
-  const [issue, setIssue] = useState('');
-  const [fix, setFix] = useState('');
+  const [kind, setKind] = useState<SlaExclusionKind | ''>('');
+  const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  // A first draft from the client's brief, ready to edit.
-  useEffect(() => {
-    if (!ticket) return;
-    const timer = window.setTimeout(() => {
-      const draft = draftDiagnosis(ticket, assetOf(ticket.assetId)?.name ?? 'the asset');
-      setIssue(draft.issue);
-      setFix(draft.fix);
-      setDrafting(false);
-    }, 700);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId]);
   if (!ticket) return null;
-  const reporter = reporterOf(ticket);
-  const errors = { issue: issue.trim().length < 10 ? 'Say what is wrong.' : '', fix: fix.trim().length < 10 ? 'Say how you’ll fix it.' : '' };
   const close = () => setDialog(null);
+  const current = ticket.slaExclusion;
 
+  if (current)
+    return (
+      <Modal
+        title="Count against the SLA again?"
+        description="Its deadlines start counting again, and late ones show as late."
+        onClose={close}
+        footer={
+          <>
+            <Button variant="secondary" onClick={close}>
+              Keep outside
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setSlaExclusion(ticket.id, null);
+                close();
+              }}
+            >
+              Count it again
+            </Button>
+          </>
+        }
+      >
+        <div className="form-stack">
+          <DialogSubject id={ticket.id} title={ticket.title} />
+          <p className="dialog-note">
+            Outside the SLA as <strong>{SLA_EXCLUSION_LABEL[current.kind].toLowerCase()}</strong>. {current.note}
+          </p>
+        </div>
+      </Modal>
+    );
+
+  const errors = { kind: kind ? '' : 'Choose a reason.', note: note.trim().length < 5 ? 'Say what happened.' : '' };
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (drafting || errors.issue || errors.fix) return;
-    if (changeStatus(ticket.id, 'in_progress', { diagnosis: { issue, fix } })) close();
+    if (errors.kind || errors.note) return;
+    setSlaExclusion(ticket.id, { kind: kind as SlaExclusionKind, note });
+    close();
   };
-
   return (
     <Modal
-      title="Start work"
-      description={`Tell ${reporter?.name ?? 'the client'} what’s wrong and how you’ll fix it. They see this on the ticket in the Client Portal.`}
+      title="Mark outside the SLA"
+      description="Only for the SLA’s exclusions. Its deadlines stop counting; the ticket stays open and keeps moving."
       onClose={close}
-      width={600}
       footer={
         <>
           <Button variant="secondary" onClick={close}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="start-work" disabled={drafting}>
-            Start work and send
+          <Button variant="primary" type="submit" form="sla-exclusion">
+            Mark outside SLA
           </Button>
         </>
       }
     >
-      <form id="start-work" className="form-stack" onSubmit={submit} noValidate>
+      <form id="sla-exclusion" className="form-stack" onSubmit={submit} noValidate>
         <DialogSubject id={ticket.id} title={ticket.title} />
-        <Field label="What’s wrong" htmlFor="sw-issue" error={submitted ? errors.issue : ''}>
-          {drafting ? <DraftSkeleton lines={3} /> : <TextArea id="sw-issue" rows={3} value={issue} onChange={(e) => setIssue(e.target.value)} data-autofocus />}
+        <Field label="Reason" htmlFor="ex-kind" error={submitted ? errors.kind : ''}>
+          <Dropdown
+            id="ex-kind"
+            value={kind}
+            onChange={(v) => setKind(v as SlaExclusionKind)}
+            placeholder="Choose a reason"
+            invalid={submitted && !!errors.kind}
+            options={EXCLUSION_KINDS.map((k) => ({ value: k, label: SLA_EXCLUSION_LABEL[k], description: SLA_EXCLUSION_HINT[k] }))}
+          />
         </Field>
-        <Field label="How we’ll fix it" htmlFor="sw-fix" error={submitted ? errors.fix : ''}>
-          {drafting ? <DraftSkeleton lines={2} /> : <TextArea id="sw-fix" rows={3} value={fix} onChange={(e) => setFix(e.target.value)} />}
+        <Field label="What happened" htmlFor="ex-note" error={submitted ? errors.note : ''}>
+          <TextArea id="ex-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: the WhatsApp provider was down from 10:00 to 11:30." />
         </Field>
-        <p className="dialog-note">{drafting ? 'Drafting from the client’s brief…' : 'Drafted from the client’s brief. Edit anything before you send.'}</p>
       </form>
     </Modal>
   );
 }
 
-function DraftSkeleton({ lines }: { lines: number }) {
-  return (
-    <div className="draft-skeleton" aria-hidden>
-      {Array.from({ length: lines }, (_, i) => (
-        <span key={i} style={{ width: `${i === lines - 1 ? 62 : 96 - i * 6}%` }} />
-      ))}
-    </div>
-  );
-}
-
-/* ---------- Send for approval: the fix goes to the client with a note and proof ---------- */
+/* ---------- Ready to deploy: testing passed; the resolution notes and proof go to the client ---------- */
 
 function RequestApprovalDialog({ ticketId }: { ticketId: string }) {
-  const { ticketOf, reporterOf, changeStatus, setDialog } = useStore();
+  const { ticketOf, assetOf, changeStatus, setDialog } = useStore();
   const ticket = ticketOf(ticketId);
-  const [note, setNote] = useState('');
+  // Drafted already, so it only needs checking and anything specific added.
+  const [note, setNote] = useState(() => (ticket ? verifiedDraft(assetOf(ticket.assetId)?.name ?? 'the asset') : ''));
   const [files, setFiles] = useState<Attachment[]>([]);
   const [submitted, setSubmitted] = useState(false);
   if (!ticket) return null;
-  const reporter = reporterOf(ticket);
-  const error = note.trim().length < 10 ? 'Tell the client what changed and how to check it.' : '';
+  const errors = {
+    note: note.trim().length < 10 ? 'Say what was done.' : '',
+    proof: files.length === 0 ? 'Add at least one screenshot or video as proof.' : '',
+  };
   const close = () => setDialog(null);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (error) return;
-    if (changeStatus(ticket.id, 'waiting_approval', { handoff: { note, attachments: files } })) close();
+    if (errors.note || errors.proof) return;
+    if (changeStatus(ticket.id, 'ready_to_deploy', { handoff: { note, attachments: files } })) close();
   };
 
   return (
     <Modal
-      title="Send for approval"
-      description={`Testing passed. ${reporter?.name ?? 'The client'} gets this in the Client Portal with the fix to approve.`}
+      title="Ready to deploy"
+      description="Testing passed. The resolution notes and proof go to the client, who reads them and deploys."
       onClose={close}
       width={560}
       footer={
@@ -239,22 +260,22 @@ function RequestApprovalDialog({ ticketId }: { ticketId: string }) {
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="request-approval">
-            Send for approval
+            Send to client
           </Button>
         </>
       }
     >
       <form id="request-approval" className="form-stack" onSubmit={submit} noValidate>
         <DialogSubject id={ticket.id} title={ticket.title} />
-        <Field label="Note to the client" htmlFor="ra-note" error={submitted ? error : ''}>
+        <Field label="Resolution notes" htmlFor="ra-note" hint="Drafted for you; add anything specific to this fix. Attach screenshots or a video as proof." error={submitted ? errors.note || errors.proof : ''}>
           <RichInput
             id="ra-note"
             value={note}
             onChange={setNote}
             files={files}
             onFilesChange={setFiles}
-            invalid={submitted && !!error}
-            placeholder="What changed, and how can they check it?"
+            invalid={submitted && !!(errors.note || errors.proof)}
+            placeholder="What was done, and how was it checked?"
             autoFocus
           />
         </Field>
@@ -277,14 +298,14 @@ function MoveNoteDialog({ ticketId, to }: { ticketId: string; to: TicketStatus }
   const placeholder: Partial<Record<TicketStatus, string>> = {
     on_testing: 'The map pins still point to the old addresses on Safari.',
     waiting_testing: 'Two outlets are still missing their opening hours.',
-    waiting_approval: 'Found a layout bug on small phones before the client checked.',
+    ready_to_deploy: 'Found a layout bug on small phones before the client checked.',
     resolved: 'The client reported the same issue again on the new variants.',
     canceled: 'The client wants this after all; the duplicate was closed instead.',
   };
   const description =
-    to === 'reopened'
-      ? 'It goes back to Reopened, ready to pick up again.'
-      : ticket.status === 'waiting_approval'
+    ticket.status === 'resolved' || ticket.status === 'canceled'
+      ? 'It goes back to the assignee as In progress.'
+      : ticket.status === 'ready_to_deploy'
         ? `It goes back to In progress and leaves the client’s review. The client sees In progress again.`
         : 'It goes back to In progress. Send it to testing again once fixed.';
 
@@ -306,7 +327,7 @@ function MoveNoteDialog({ ticketId, to }: { ticketId: string; to: TicketStatus }
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="move-note">
-            {to === 'reopened' ? 'Reopen ticket' : 'Move to In progress'}
+            {ticket.status === 'resolved' || ticket.status === 'canceled' ? 'Reopen ticket' : 'Move to In progress'}
           </Button>
         </>
       }
@@ -400,7 +421,7 @@ function ResolveTicketDialog({ ticketId }: { ticketId: string }) {
     <Modal
       title="Resolve without client approval?"
       description={`${
-        ticket.status === 'waiting_approval' ? `${reporter?.name ?? 'The client'} hasn’t approved the fix yet.` : `It hasn’t gone to ${reporter?.name ?? 'the client'} for approval yet.`
+        ticket.status === 'ready_to_deploy' ? `${reporter?.name ?? 'The client'} hasn’t approved the fix yet.` : `It hasn’t gone to ${reporter?.name ?? 'the client'} to approve yet.`
       } The reason goes into the activity history.`}
       onClose={close}
       footer={
@@ -471,7 +492,7 @@ function AddClientDialog() {
     if (errors.name || errors.industry) return;
     const client = addClient({ name, industry, logoImage: logo });
     close();
-    navigate(`/clients/${client.id}`);
+    navigate('/settings/workspace');
     toast(`${client.name} added. Next, add the people who raise tickets.`);
   };
 
@@ -584,7 +605,7 @@ function AddClientUserDialog({ clientId }: { clientId: string }) {
       <form id="add-user" className="form-grid" onSubmit={submit} noValidate>
         <div className="span-2">
           <Field label="Full name" htmlFor="au-name" error={submitted ? errors.name : ''}>
-            <input id="au-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nabila Rahmawati" data-autofocus />
+            <input id="au-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Lucky Salim" data-autofocus />
           </Field>
         </div>
         <div className="span-2">

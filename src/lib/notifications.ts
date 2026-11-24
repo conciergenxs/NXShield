@@ -71,6 +71,8 @@ function describe(type: NotificationEventType, t: Ticket, ctx: NotifyContext, de
       return { title: `${t.id} canceled`, body: detail ? `${detail}. ${t.title}` : t.title };
     case 'progress_update':
       return { title: `${t.id}: progress update`, body: detail ?? t.title };
+    case 'mention':
+      return { title: `Mentioned on ${t.id}`, body: detail ?? t.title };
   }
 }
 

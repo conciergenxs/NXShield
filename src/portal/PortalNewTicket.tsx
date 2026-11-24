@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useStore } from '../store';
 import { TicketForm } from '../components/TicketForm';
@@ -12,7 +12,6 @@ export function PortalNewTicket() {
   const { user, client, assets } = usePortalUser();
   const navigate = useNavigate();
   const location = useLocation();
-  const [params] = useSearchParams();
   if (!user || !client) return null;
 
   return (
@@ -24,7 +23,7 @@ export function PortalNewTicket() {
             Back to tickets
           </button>
           <h1 className="portal-form-title">Tell us what you need</h1>
-          <p className="portal-form-desc">Report a problem or request a change, and the NXS team will take it from there.</p>
+          <p className="portal-form-desc">Tell us what happened or what you need. NXS replies within an hour.</p>
         </header>
 
         {assets.length === 0 ? (
@@ -35,10 +34,8 @@ export function PortalNewTicket() {
         ) : (
           <TicketForm
             clients={[client]}
-            assets={assets}
             chooseClient={false}
             meId={user.id}
-            presetAssetId={params.get('asset')}
             idPrefix="pt"
             submitLabel="Submit ticket"
             cancelTo="/portal"

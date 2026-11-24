@@ -1,21 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useMemo, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Boxes, Building2, GripVertical, Signal, User } from 'lucide-react';
-import type { Ticket, TicketStatus } from '../types';
-import { SEVERITIES, SEVERITY_LABEL, STATUS_LABEL, canTransition, isOpen, severityRank, NO_PRIORITY_LABEL } from '../lib/domain';
+import { Boxes, Building2, FlaskConical, GripVertical, Hash, Layers, Signal, User } from 'lucide-react';
+import type { TaskType, Ticket, TicketStatus } from '../types';
+import { SEVERITIES, SEVERITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL, canTransition, isOpen, severityRank, NO_PRIORITY_LABEL } from '../lib/domain';
 import { useStore } from '../store';
 import { STATUS_ICON, STATUS_TONE, SeverityBadge, SlaIndicator } from '../components/domain';
 import { PORTAL_ORDER, STAFF_ORDER, groupStatusFor, statusLabelFor, useScopedTickets, useTicketScope } from '../components/scope';
-import { Avatar, Card, cx } from '../components/ui';
+import { Avatar, Badge, Card, cx, type Tone } from '../components/ui';
 import { FilterButton, FilterChips, useFilterMenu } from '../components/FilterMenu';
 import { TicketsHeader, TicketsToolbar } from './Tickets';
 
 const DAY = 24 * 60 * 60_000;
 const COLUMN_LIMIT = 8;
+const TASK_TONE: Record<TaskType, Tone> = { frontend: 'blue', backend: 'green' };
 
 /**
- * A ticket as a card, laid out like a row of the list: ID and severity on top,
- * the title, then the same properties the table shows, each with its column
+ * A ticket as a card: the ID on top, the title, then its properties (the
+ * client's asset, who has it, story points, who tests it, task type), the priority by
+ * the ID, each with its column
  * icon, and the deadline. Drag the card to move it to another stage.
  */
 function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticket; onDragStart: (e: DragEvent, t: Ticket) => void; onDragEnd: () => void; dragging: boolean }) {
@@ -23,6 +25,8 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
   const { portal, ticketPath } = useTicketScope();
   const client = clientOf(ticket.clientId);
   const member = memberOf(ticket.assigneeId);
+  const tester = memberOf(ticket.testerId);
+  const plan = ticket.plan ?? {};
   const asset = assetOf(ticket.assetId);
   // Only NXS moves tickets between stages; in the portal the cards stay put.
   return (
@@ -38,27 +42,21 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
         <Link to={ticketPath(ticket.id)} className="ticket-id">
           {ticket.id}
         </Link>
-        <SeverityBadge severity={ticket.severity} />
+        <span className="board-priority">
+          <SeverityBadge severity={ticket.severity} />
+        </span>
       </div>
       <Link to={ticketPath(ticket.id)} className="board-card-title" title={ticket.title}>
         {ticket.title}
       </Link>
       <dl className="board-props">
-        {!portal && (
-          <div>
-            <dt>
-              <Building2 size={14} aria-hidden />
-              <span className="sr-only">Client</span>
-            </dt>
-            <dd className="truncate">{client?.name}</dd>
-          </div>
-        )}
         <div>
           <dt>
             <Boxes size={14} aria-hidden />
             <span className="sr-only">Asset</span>
           </dt>
-          <dd className="truncate">{asset?.name}</dd>
+          {/* Staff see whose asset it is in the same line: "CML Marketing-Tech Dashboard". */}
+          <dd className="truncate">{portal || !client ? asset?.name : `${client.name} ${asset?.name ?? ''}`.trim()}</dd>
         </div>
         <div>
           <dt>
@@ -68,9 +66,38 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
           </dt>
           <dd className={cx('truncate', !member && 'muted')}>{member?.name ?? 'Unassigned'}</dd>
         </div>
+        {!portal && (
+          <div>
+            <dt>
+              <Hash size={14} aria-hidden />
+              <span className="sr-only">Story points</span>
+            </dt>
+            <dd className={cx(plan.storyPoints == null && 'muted')} title="Story points">
+              {plan.storyPoints ?? 'No story points'}
+            </dd>
+          </div>
+        )}
+        {!portal && (
+          <div>
+            <dt>
+              <FlaskConical size={14} aria-hidden />
+              <span className="sr-only">Testing</span>
+            </dt>
+            <dd className={cx('truncate', !tester && 'muted')} title="Testing">{tester?.name ?? 'No tester yet'}</dd>
+          </div>
+        )}
+        {!portal && (
+          <div>
+            <dt>
+              <Layers size={14} aria-hidden />
+              <span className="sr-only">Task type</span>
+            </dt>
+            <dd>{plan.taskType ? <Badge tone={TASK_TONE[plan.taskType]}>{TASK_TYPE_LABEL[plan.taskType]}</Badge> : <span className="muted">No task type</span>}</dd>
+          </div>
+        )}
       </dl>
-      <div className="board-card-foot">
-        <SlaIndicator sla={slaOf(ticket)} showLabel />
+      <div className="board-card-foot board-sla">
+        <SlaIndicator sla={slaOf(ticket)} status={ticket.status} showLabel />
       </div>
     </article>
   );
@@ -88,25 +115,6 @@ export function Board() {
   const [over, setOver] = useState<TicketStatus | null>(null);
   const [expanded, setExpanded] = useState<TicketStatus[]>([]);
 
-  // Which sides have more columns out of view, so those edges fade to white
-  // instead of cutting a column off.
-  const boardRef = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState({ left: false, right: false });
-  const measureEdges = useCallback(() => {
-    const el = boardRef.current;
-    if (!el) return;
-    const left = el.scrollLeft > 1;
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-    setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
-  }, []);
-  useEffect(() => {
-    const el = boardRef.current;
-    if (!el) return;
-    measureEdges();
-    const ro = new ResizeObserver(measureEdges);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [measureEdges]);
 
   const columns = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -129,7 +137,6 @@ export function Board() {
       return { status, list };
     });
   }, [tickets, client, assignee, severity, q, now, slaOf, portal]);
-  useEffect(measureEdges, [columns, expanded, measureEdges]);
 
   const fields = [
     { key: 'client', label: 'Client', icon: Building2, value: client, empty: 'all', searchable: true, options: [{ value: 'all', label: 'All' }, ...clients.map((c) => ({ value: c.id, label: c.name }))], onChange: setClient },
@@ -177,7 +184,7 @@ export function Board() {
           chips={<FilterChips menu={filterMenu} onClearAll={filterMenu.active.length ? clearFilters : undefined} />}
         />
 
-        <div ref={boardRef} onScroll={measureEdges} className={cx('board', drag && 'is-dragging', edges.left && 'fade-left', edges.right && 'fade-right')}>
+        <div className={cx('board', drag && 'is-dragging')}>
         {columns.map(({ status, list }) => {
           const allowed = drag ? canTransition(drag.from, status) : false;
           const isSource = drag?.from === status;
@@ -218,17 +225,22 @@ export function Board() {
                 ))}
                 {list.length === 0 && <p className="board-empty">{drag && allowed ? 'Drop here' : 'No tickets'}</p>}
                 {list.length > 0 && drag && allowed && <p className="board-empty board-drop">Drop here</p>}
-                {list.length > COLUMN_LIMIT && (
-                  <button type="button" className="board-more" onClick={() => setExpanded((x) => (showAll ? x.filter((s) => s !== status) : [...x, status]))}>
-                    {showAll ? 'Show fewer' : `Show ${list.length - COLUMN_LIMIT} more`}
-                  </button>
-                )}
-                {(status === 'resolved' || status === 'canceled') && (
-                  <Link to={`${viewPath.list}?status=${status}`} className="board-more">
-                    View all {statusLabelFor(portal, status).toLowerCase()} tickets
-                  </Link>
-                )}
               </div>
+              {/* The column's own links sit in its foot, outside the scrolling cards. */}
+              {(list.length > COLUMN_LIMIT || status === 'resolved' || status === 'canceled') && (
+                <div className="board-col-foot">
+                  {list.length > COLUMN_LIMIT && (
+                    <button type="button" className="board-more" onClick={() => setExpanded((x) => (showAll ? x.filter((s) => s !== status) : [...x, status]))}>
+                      {showAll ? 'Show fewer' : `Show ${list.length - COLUMN_LIMIT} more`}
+                    </button>
+                  )}
+                  {(status === 'resolved' || status === 'canceled') && (
+                    <Link to={`${viewPath.list}?status=${status}`} className="board-more">
+                      View all
+                    </Link>
+                  )}
+                </div>
+              )}
             </section>
           );
         })}

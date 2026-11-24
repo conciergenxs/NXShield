@@ -69,3 +69,16 @@ export function uptimeOver(days: UptimeDay[]): number | null {
 export type UptimeLevel = 'up' | 'partial' | 'down' | 'none';
 /** How a day reads: fully up, a short outage, a long one, or no data. */
 export const uptimeLevel = (d: UptimeDay): UptimeLevel => (d.pct == null ? 'none' : d.downMins === 0 ? 'up' : d.downMins < 60 ? 'partial' : 'down');
+
+/** The asset's typical response time right now, in milliseconds. Null without readings or while it is down. */
+export function responseTimeMs(asset: Asset): number | null {
+  if (asset.uptime30d == null || asset.status === 'outage') return null;
+  const base = 160 + Math.floor(seeded(`${asset.id}:rt`)() * 260);
+  return asset.status === 'degraded' ? base * 3 : base;
+}
+
+/** The most recent day with downtime, from the history. */
+export function lastIncident(days: UptimeDay[]): UptimeDay | null {
+  for (let i = days.length - 1; i >= 0; i--) if (days[i].downMins > 0) return days[i];
+  return null;
+}

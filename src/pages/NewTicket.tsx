@@ -28,10 +28,8 @@ export function NewTicket() {
         </header>
         <TicketForm
           clients={clients}
-          assets={assets}
           chooseClient
           presetClientId={params.get('client')}
-          presetAssetId={params.get('asset')}
           idPrefix="ct"
           submitLabel="Log ticket"
           cancelTo="/tickets"

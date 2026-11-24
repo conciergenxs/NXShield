@@ -14,12 +14,12 @@ function fileKind(name: string): Attachment['kind'] {
 const fileSize = (bytes: number) => (bytes > 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`);
 
 let seq = 0;
-/** A picked, pasted or dropped file as an attachment. Pictures and videos keep a local link so they can be shown. */
+/** A picked, pasted or dropped file as an attachment, with a local link so it can be shown or downloaded. */
 export function toAttachment(f: File): Attachment {
   // Pasted screenshots arrive as "image.png"; give them a name worth reading.
   const name = f.name && f.name !== 'image.png' ? f.name : `screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
   const kind = f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : fileKind(name);
-  return { id: `att-in-${Date.now()}-${++seq}`, name, size: fileSize(f.size), kind, url: kind === 'image' || kind === 'video' ? URL.createObjectURL(f) : undefined };
+  return { id: `att-in-${Date.now()}-${++seq}`, name, size: fileSize(f.size), kind, url: URL.createObjectURL(f) };
 }
 
 interface Props {
@@ -87,7 +87,13 @@ export function RichInput({ id, value, onChange, files, onFilesChange, placehold
                 ) : (
                   <>
                     <Icon size={16} aria-hidden />
-                    <span className="truncate">{f.name}</span>
+                    {f.url ? (
+                      <a className="truncate" href={f.url} download={f.name}>
+                        {f.name}
+                      </a>
+                    ) : (
+                      <span className="truncate">{f.name}</span>
+                    )}
                     <span className="muted">{f.size}</span>
                   </>
                 )}
