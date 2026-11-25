@@ -97,7 +97,7 @@ export function draftDiagnosis(t: Pick<Ticket, 'title' | 'description'>, assetNa
 export const PROGRESS_EVERY_MINS: Record<Severity, number | null> = { critical: 60, medium: 240, low: null };
 
 /** Stages where work is moving and updates are due. Not New, not Blocker, not the client's turn. */
-export const PROGRESS_STAGES: TicketStatus[] = ['in_progress', 'waiting_testing', 'on_testing'];
+export const PROGRESS_STAGES: TicketStatus[] = ['in_progress', 'waiting_testing', 'on_testing', 'qa_passed'];
 
 const when = (ts: number) => `${fmtWeekday(ts)}, ${fmtDate(ts)}`;
 
@@ -144,7 +144,8 @@ export const stepStaffLine = (text: string): string | undefined => STEP_STAFF[te
 export function stepUpdate(from: TicketStatus, to: TicketStatus): string | null {
   if (to === 'waiting_testing') return 'The fix is done. It goes through testing before it reaches you.';
   if (to === 'on_testing') return 'We’re testing the fix now. You’ll get it to check once it passes.';
+  if (to === 'qa_passed') return 'The fix passed testing. We’re preparing it for you to approve.';
   if (to === 'ready_to_deploy') return 'Testing passed. The fix is scheduled to go live.';
-  if (to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'ready_to_deploy')) return 'Testing found something that still needs work. We’re fixing it before it reaches you.';
+  if (to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'qa_passed' || from === 'ready_to_deploy')) return 'Testing found something that still needs work. We’re fixing it before it reaches you.';
   return null;
 }

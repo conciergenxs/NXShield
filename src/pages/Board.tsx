@@ -1,6 +1,6 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Boxes, Building2, FlaskConical, GripVertical, Hash, Layers, Signal, User } from 'lucide-react';
+import { ArrowRight, Ban, Boxes, Building2, ChevronDown, FlaskConical, GripVertical, Hash, Layers, Signal, User } from 'lucide-react';
 import type { TaskType, Ticket, TicketStatus } from '../types';
 import { SEVERITIES, SEVERITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL, canTransition, isOpen, severityRank, NO_PRIORITY_LABEL } from '../lib/domain';
 import { useStore } from '../store';
@@ -11,7 +11,8 @@ import { FilterButton, FilterChips, useFilterMenu } from '../components/FilterMe
 import { TicketsHeader, TicketsToolbar } from './Tickets';
 
 const DAY = 24 * 60 * 60_000;
-const COLUMN_LIMIT = 8;
+/** Cards a column shows before “View all”: the board stays a calm overview, like Notion's. */
+const COLUMN_LIMIT = 3;
 const TASK_TONE: Record<TaskType, Tone> = { frontend: 'blue', backend: 'green' };
 
 /**
@@ -28,10 +29,12 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
   const tester = memberOf(ticket.testerId);
   const plan = ticket.plan ?? {};
   const asset = assetOf(ticket.assetId);
+  // Blocked work stays in In progress on the board, marked so it can't be missed.
+  const blocker = !portal && ticket.status === 'blocked' ? ticket.blockers[ticket.blockers.length - 1] : undefined;
   // Only NXS moves tickets between stages; in the portal the cards stay put.
   return (
     <article
-      className={cx('board-card', dragging && 'is-dragging', portal && 'is-static')}
+      className={cx('board-card', dragging && 'is-dragging', portal && 'is-static', blocker && 'has-blocker')}
       draggable={!portal}
       onDragStart={portal ? undefined : (e) => onDragStart(e, ticket)}
       onDragEnd={portal ? undefined : onDragEnd}
@@ -46,6 +49,13 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
           <SeverityBadge severity={ticket.severity} />
         </span>
       </div>
+      {blocker && (
+        <p className="board-blocker" title={blocker.details}>
+          <Ban size={14} aria-hidden />
+          <strong>Blocked</strong>
+          <span className="truncate">{blocker.details}</span>
+        </p>
+      )}
       <Link to={ticketPath(ticket.id)} className="board-card-title" title={ticket.title}>
         {ticket.title}
       </Link>
@@ -103,6 +113,9 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
   );
 }
 
+/** The column a ticket sits in: as the list groups it, with Blocked inside In progress. */
+const columnOf = (portal: boolean, s: TicketStatus) => (s === 'blocked' ? 'in_progress' : groupStatusFor(portal, s));
+
 export function Board() {
   const { clients, team, now, slaOf, changeStatus } = useStore();
   const { portal, viewPath } = useTicketScope();
@@ -127,12 +140,12 @@ export function Board() {
       if (term && !`${t.id} ${t.title}`.toLowerCase().includes(term)) return false;
       return true;
     });
-    // Same stage order as the list view.
-    return (portal ? PORTAL_ORDER : STAFF_ORDER).map((status) => {
-      const list = pool.filter((t) => groupStatusFor(portal, t.status) === status);
-      // Open stages: most urgent deadline first. Finished stages: most recent first.
+    // Same stage order as the list view, except Blocked: on the board it sits in In progress.
+    return (portal ? PORTAL_ORDER : STAFF_ORDER.filter((s) => s !== 'blocked')).map((status) => {
+      const list = pool.filter((t) => columnOf(portal, t.status) === status);
+      // Open stages: blocked work first, then the most urgent deadline. Finished stages: most recent first.
       list.sort((a, b) =>
-        isOpen(a) ? slaOf(a).active.remainingMs - slaOf(b).active.remainingMs || severityRank(b.severity) - severityRank(a.severity) : (b.canceledAt ?? b.resolvedAt ?? 0) - (a.canceledAt ?? a.resolvedAt ?? 0),
+        isOpen(a) ? Number(b.status === 'blocked') - Number(a.status === 'blocked') || slaOf(a).active.remainingMs - slaOf(b).active.remainingMs || severityRank(b.severity) - severityRank(a.severity) : (b.canceledAt ?? b.resolvedAt ?? 0) - (a.canceledAt ?? a.resolvedAt ?? 0),
       );
       return { status, list };
     });
@@ -186,8 +199,8 @@ export function Board() {
 
         <div className={cx('board', drag && 'is-dragging')}>
         {columns.map(({ status, list }) => {
-          const allowed = drag ? canTransition(drag.from, status) : false;
-          const isSource = drag?.from === status;
+          const isSource = !!drag && columnOf(portal, drag.from) === status;
+          const allowed = drag && !isSource ? canTransition(drag.from, status) : false;
           const showAll = expanded.includes(status);
           const visible = showAll ? list : list.slice(0, COLUMN_LIMIT);
           const Icon = STATUS_ICON[status];
@@ -226,21 +239,20 @@ export function Board() {
                 {list.length === 0 && <p className="board-empty">{drag && allowed ? 'Drop here' : 'No tickets'}</p>}
                 {list.length > 0 && drag && allowed && <p className="board-empty board-drop">Drop here</p>}
               </div>
-              {/* The column's own links sit in its foot, outside the scrolling cards. */}
-              {(list.length > COLUMN_LIMIT || status === 'resolved' || status === 'canceled') && (
-                <div className="board-col-foot">
-                  {list.length > COLUMN_LIMIT && (
-                    <button type="button" className="board-more" onClick={() => setExpanded((x) => (showAll ? x.filter((s) => s !== status) : [...x, status]))}>
-                      {showAll ? 'Show fewer' : `Show ${list.length - COLUMN_LIMIT} more`}
-                    </button>
-                  )}
-                  {(status === 'resolved' || status === 'canceled') && (
-                    <Link to={`${viewPath.list}?status=${status}`} className="board-more">
-                      View all
-                    </Link>
-                  )}
-                </div>
-              )}
+              {/* More than three: one quiet full-width button opens the rest in place. Finished
+                  columns hand over to the list, where their whole history lives. */}
+              {list.length > COLUMN_LIMIT &&
+                (status === 'resolved' || status === 'canceled' ? (
+                  <Link to={`${viewPath.list}?status=${status}`} className="board-view-all">
+                    <span>View all {list.length}</span>
+                    <ArrowRight size={15} aria-hidden />
+                  </Link>
+                ) : (
+                  <button type="button" className="board-view-all" aria-expanded={showAll} onClick={() => setExpanded((x) => (showAll ? x.filter((s) => s !== status) : [...x, status]))}>
+                    <span>{showAll ? 'Show fewer' : `View all ${list.length}`}</span>
+                    <ChevronDown size={15} aria-hidden className={cx('board-view-all-caret', showAll && 'is-open')} />
+                  </button>
+                ))}
             </section>
           );
         })}

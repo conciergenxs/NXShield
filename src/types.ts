@@ -14,6 +14,7 @@ export type TicketStatus =
   | 'blocked'
   | 'waiting_testing'
   | 'on_testing'
+  | 'qa_passed'
   | 'ready_to_deploy'
   | 'resolved'
   | 'canceled';
@@ -59,7 +60,12 @@ export interface Client {
   logo: { initials: string; bg: string; fg: string; image?: string };
   contact: { name: string; title: string; email: string; phone: string };
   slaPolicyId: string;
+  /** The client's PM at NXS: reviews every new ticket's properties first. */
   accountManagerId: string;
+  /** Who checks and tests this client's tickets (QA). */
+  testerId: string;
+  /** Who a ticket goes to, by the kind of work. */
+  devs: Record<TaskType, string>;
   since: string;
   users: ClientUser[];
 }
@@ -196,10 +202,21 @@ export interface Attachment {
 /** Sent to the client when the fix is ready to deploy: the full RCA document(s), with an optional note. */
 export interface Handoff {
   id: string;
+  /** Release notes: what was fixed and how it was checked, as proof for the client. */
   note: string;
   attachments: Attachment[];
+  /** The container image the fix ships in. */
+  imageTag?: string;
   by: Actor;
   at: number;
+}
+
+/** QA's result on staging: it works, with what they checked and any proof. */
+export interface TestResult {
+  at: number;
+  by: Actor;
+  note: string;
+  proof: Attachment[];
 }
 
 /** The reason given for a move back (rework) or a reopen. */
@@ -223,6 +240,8 @@ export interface Blocker {
   clearedBy: Actor | null;
   /** How it was cleared, if anyone said. */
   clearNote: string;
+  /** The stage the work was in when it got blocked; unblocking goes back there. */
+  from?: TicketStatus;
 }
 
 /**
@@ -246,6 +265,8 @@ export interface Cancellation {
   by: Actor;
   reason: string;
   at: number;
+  /** Screenshots or a recording showing it isn't an issue, when QA cancels it after checking. */
+  proof?: Attachment[];
 }
 
 /**
@@ -332,6 +353,35 @@ export interface Ticket {
   rcaDraft?: { problem?: string; issue: string; fix: string; hours?: number; at: number };
   /** Questions the team asked the AI about the RCA, and its answers. Internal. */
   rcaChat?: RcaExchange[];
+  /** The AI's code fix as the developer last left it (after any revisions they asked for). Internal. */
+  codeFix?: CodeFix;
+  /** QA passed the fix on staging; the release goes to the client next. */
+  testResult?: TestResult;
+  /** Marked as a security or data issue: a P2 then gets a full RCA too. */
+  securityIssue?: boolean;
+  /** The same issue came back after an earlier fix: a P3 then gets a full RCA too. */
+  recurring?: boolean;
+}
+
+/** One line of a diff: added, removed, or unchanged context. */
+export type DiffLine = { t: '+' | '-' | ' '; text: string };
+export interface CodeFile {
+  path: string;
+  /** Short note on what changed in this file. */
+  note: string;
+  lines: DiffLine[];
+}
+/** The AI's code fix for a ticket: a branch, what it does, and the changed files. */
+export interface CodeFix {
+  repo: string;
+  branch: string;
+  summary: string;
+  files: CodeFile[];
+  /** How many times the developer asked the AI to revise it. */
+  revision: number;
+  /** When the developer approved it and it went on staging. */
+  stagedAt?: number;
+  stagedBy?: Actor;
 }
 
 export interface RcaExchange {
@@ -406,7 +456,10 @@ export interface Comment {
   by: Actor;
   at: number;
   text: string;
+  /** What it replies to on the client's timeline: the initial RCA, or one fix sent (by its id). */
+  on?: CommentOn;
 }
+export type CommentOn = { kind: 'rca' } | { kind: 'release'; id: string };
 
 /** The AI's first read of a new ticket. QA checks it; anything still equal to it reads as set by AI until confirmed. */
 export interface TicketTriage {

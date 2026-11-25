@@ -157,22 +157,26 @@ export const SLA_EXCLUSION_HINT: Record<SlaExclusionKind, string> = {
 /** NXS's own stages, in the order work moves through them. */
 export const STATUSES: TicketStatus[] = [
   'new',
+  'not_started',
   'in_progress',
   'blocked',
   'waiting_testing',
   'on_testing',
+  'qa_passed',
   'ready_to_deploy',
   'resolved',
   'canceled',
 ];
 export const STATUS_LABEL: Record<TicketStatus, string> = {
   new: 'New',
-  // QA confirmed and assigned it; the assignee hasn't started yet.
+  // The PM reviewed it; QA checks the issue is real before it goes to a developer.
   not_started: 'Not started',
   in_progress: 'In progress',
   blocked: 'Blocked',
   waiting_testing: 'Waiting for testing',
   on_testing: 'On testing',
+  // Testing passed; the developer prepares the release (the image and its notes).
+  qa_passed: 'QA passed',
   // Tested; the client checks it and approves it going live, or says what's still wrong.
   ready_to_deploy: 'Ready to deploy',
   resolved: 'Resolved',
@@ -223,7 +227,7 @@ export const AVAILABILITY_LABEL: Record<Availability, string> = {
 };
 
 export const ROLE_LABEL: Record<Role, string> = {
-  admin: 'Administrator',
+  admin: 'Super admin',
   support_lead: 'Support lead',
   support_agent: 'Support agent',
   viewer: 'Viewer',
@@ -239,7 +243,7 @@ export const CHANNEL_LABEL: Record<TicketChannel, string> = {
 export const RECIPIENT_LABEL: Record<RecipientKind, string> = {
   assignee: 'Assigned support',
   support_lead: 'Support lead',
-  account_manager: 'Account manager',
+  account_manager: 'Project manager',
   client_contact: 'Client contact',
 };
 
@@ -257,47 +261,54 @@ export const EVENT_LABEL: Record<NotificationEventType, string> = {
 
 /* ---------- Workflow ---------- */
 
-export const OPEN_STATUSES: TicketStatus[] = ['new', 'not_started', 'in_progress', 'blocked', 'waiting_testing', 'on_testing', 'ready_to_deploy'];
+export const OPEN_STATUSES: TicketStatus[] = ['new', 'not_started', 'in_progress', 'blocked', 'waiting_testing', 'on_testing', 'qa_passed', 'ready_to_deploy'];
 export const isOpen = (t: Pick<Ticket, 'status'>) => OPEN_STATUSES.includes(t.status);
 
 /** The linear path: the one step the main button takes from each stage.
  *  Ready to deploy has none (the client answers in the portal), and Blocked has
  *  two (back to In progress, or straight to testing). */
 export const NEXT_STAGE: Partial<Record<TicketStatus, TicketStatus>> = {
-  // Confirming in New starts the work: there is no separate "not started" step.
-  new: 'in_progress',
+  // The PM's review hands it to QA, who checks the issue before a developer starts.
+  new: 'not_started',
   not_started: 'in_progress',
   in_progress: 'waiting_testing',
   waiting_testing: 'on_testing',
-  on_testing: 'ready_to_deploy',
+  on_testing: 'qa_passed',
+  qa_passed: 'ready_to_deploy',
 };
 /** Where work can pick up again once a blocker clears. */
 export const UNBLOCK_TO: TicketStatus[] = ['in_progress', 'waiting_testing'];
 
 /**
- * Every move a ticket can make. Forward is only ever one step, so testing can
- * never be skipped. Everything else is one of five off-path moves, each with
- * a reason: rework (back to In progress), pause (Blocked), resolve without
- * the client's approval, cancel, and reopen (back to Not started). The client's own approve and
- * decline in the portal are not listed here; they act on Ready to deploy directly.
+ * Where a ticket can go from each stage. The usual path is New → Not started
+ * → In progress → Waiting for testing → On testing → Ready to deploy →
+ * Resolved; the rest are the sensible detours (block, send back, cancel,
+ * reopen), each asking why where it should.
  */
 export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
-  // Out of New is QA confirming the AI's read and handing it to the assignee.
-  new: ['in_progress', 'canceled'],
-  not_started: ['in_progress', 'blocked', 'canceled'],
+  // The PM's review hands it to QA.
+  new: ['not_started', 'canceled'],
+  // QA confirms it (to the developer), sends it back for another review, or cancels it with proof.
+  not_started: ['in_progress', 'new', 'canceled'],
   in_progress: ['waiting_testing', 'blocked', 'canceled'],
-  blocked: ['in_progress', 'waiting_testing', 'canceled'],
+  // Unblocking goes back to where the work was; the step offers that one first.
+  blocked: ['in_progress', 'waiting_testing', 'on_testing', 'canceled'],
   waiting_testing: ['on_testing', 'in_progress', 'blocked', 'canceled'],
-  on_testing: ['ready_to_deploy', 'in_progress', 'blocked', 'canceled'],
-  // The client approves it in the portal (resolved); NXS can take it back or resolve it without them.
-  ready_to_deploy: ['in_progress', 'resolved', 'canceled'],
+  on_testing: ['qa_passed', 'in_progress', 'blocked', 'canceled'],
+  qa_passed: ['ready_to_deploy', 'in_progress', 'canceled'],
+  ready_to_deploy: ['resolved', 'in_progress', 'canceled'],
   resolved: ['in_progress'],
   canceled: ['in_progress'],
 };
+/** Why a move can't happen yet, if something it needs is missing. */
+export function moveBlockedBy(t: Pick<Ticket, 'status' | 'diagnosis'>, to: TicketStatus): string | null {
+  if (to === 'waiting_testing' && !t.diagnosis) return 'Send the initial RCA first.';
+  return null;
+}
 export const canTransition = (from: TicketStatus, to: TicketStatus) => TRANSITIONS[from].includes(to);
 
 /** A move back to In progress from further along: work has to be redone. */
-export const isRework = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'ready_to_deploy');
+export const isRework = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'waiting_testing' || from === 'on_testing' || from === 'qa_passed' || from === 'ready_to_deploy');
 /** Moves that ask "why" in a short note: rework and reopening. Blocker,
  *  resolve without approval and cancel have their own dialogs. */
 export const isReopen = (from: TicketStatus, to: TicketStatus) => to === 'in_progress' && (from === 'resolved' || from === 'canceled');
@@ -312,11 +323,15 @@ export function moveLabel(from: TicketStatus, to: TicketStatus): { title: string
   if (to === 'blocked') return { title: 'Blocked', hint: 'Pauses the work. Asks what is blocking it.', ask: 'What’s blocking it?' };
   if (to === 'canceled') return { title: 'Cancel ticket', hint: 'Ends the ticket. Asks why.', ask: 'Why is it canceled?' };
   if (to === 'resolved') return { title: 'Resolve without approval', hint: 'Skips the client’s approval. Asks why.', ask: 'Why skip the approval?' };
-  if (from === 'new' && to === 'in_progress') return { title: 'Confirm and assign', hint: 'Sends the RCA to the client and starts the work.', ask: '' };
+  if (from === 'new' && to === 'not_started') return { title: 'Confirm properties', hint: 'Hands it to QA to check the issue.', ask: '' };
+  if (from === 'not_started' && to === 'new') return { title: 'Back to the PM', hint: 'The properties need another look.', ask: '' };
+  if (from === 'not_started' && to === 'in_progress') return { title: 'Confirm the issue', hint: 'It happens. Hands it to the developer.', ask: '' };
   if (isReopen(from, to)) return { title: 'Reopen', hint: 'Back to the assignee, in progress. Asks why.', ask: 'Why reopen it?' };
   if (to === 'ready_to_deploy') return { title: 'Ready to deploy', hint: 'Testing passed. Sends the client a note to approve it going live.', ask: 'What should the client check?' };
   if (from === 'blocked') return { title: 'Unblock', hint: to === 'in_progress' ? 'Clears the blocker. Work carries on.' : 'Clears the blocker. The fix is ready to test.', ask: '' };
+  if (from === 'on_testing' && to === 'qa_passed') return { title: 'QA passed', hint: 'Testing passed. The developer prepares the release.', ask: '' };
   if (from === 'on_testing') return { title: 'Testing failed', hint: 'Testing failed. Asks what failed.', ask: 'What failed in testing?' };
+  if (from === 'qa_passed' && to === 'in_progress') return { title: 'Needs more work', hint: 'Back to the developer before it goes to the client. Asks why.', ask: 'What needs more work?' };
   if (from === 'waiting_testing' && to === 'in_progress') return { title: 'Not ready for testing', hint: 'Not ready to test yet. Asks why.', ask: 'Why isn’t it ready for testing?' };
   if (from === 'ready_to_deploy') return { title: 'Needs more work', hint: 'Takes it back from the client before it goes live. Asks why.', ask: 'What needs more work?' };
   if (to === 'in_progress') return { title: 'Start work', hint: 'Starts the work. Asks who owns it if nobody does.', ask: '' };
@@ -351,8 +366,9 @@ const INTERNAL_ALL: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   admin: INTERNAL_ALL,
-  support_lead: ['ticket.create', 'ticket.update', 'ticket.assign', 'notes.internal', 'assets.manage', 'sla.manage'],
-  support_agent: ['ticket.create', 'ticket.update', 'notes.internal'],
+  support_lead: ['ticket.create', 'ticket.update', 'ticket.assign', 'ticket.cancel', 'notes.internal', 'assets.manage', 'sla.manage'],
+  // QA cancels a ticket that turns out not to be an issue; developers hand on work that isn't theirs.
+  support_agent: ['ticket.create', 'ticket.update', 'ticket.assign', 'ticket.cancel', 'notes.internal'],
   viewer: ['notes.internal'],
   // Client roles never receive notes.internal.
   client_admin: ['ticket.create'],
@@ -388,6 +404,7 @@ export const PORTAL_STATUS_LABEL: Record<TicketStatus, string> = {
   blocked: 'In progress',
   waiting_testing: 'In progress',
   on_testing: 'In progress',
+  qa_passed: 'In progress',
   ready_to_deploy: 'Ready to deploy',
   // The client's Deploy is what resolves it.
   resolved: 'Deployed',
@@ -396,7 +413,7 @@ export const PORTAL_STATUS_LABEL: Record<TicketStatus, string> = {
 
 /** The stage a client sees. Blocked and testing are NXS's own steps inside
  *  "In progress", so the portal never shows them. */
-export const portalStatus = (s: TicketStatus): TicketStatus => (s === 'not_started' || s === 'blocked' || s === 'waiting_testing' || s === 'on_testing' ? 'in_progress' : s);
+export const portalStatus = (s: TicketStatus): TicketStatus => (s === 'not_started' || s === 'blocked' || s === 'waiting_testing' || s === 'on_testing' || s === 'qa_passed' ? 'in_progress' : s);
 /** Stages a client can see, in workflow order. */
 export const PORTAL_STATUSES: TicketStatus[] = STATUSES.filter((s) => portalStatus(s) === s);
 

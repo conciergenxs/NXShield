@@ -34,7 +34,7 @@ export function BackHeader({ title, description, fallback, backLabel, actions }:
 /** One fact in a detail page's side column: a small label with its icon, above a one-line value. */
 /** One property: icon and label, then the value. `stack` lets the value run to
  *  more than one line, for a value with a note or an action under it. */
-export function Prop({ icon: Icon, label, title, stack, className, children }: { icon: LucideIcon; label: string; title?: string; stack?: boolean; className?: string; children: ReactNode }) {
+export function Prop({ icon: Icon, label, title, stack, className, note, children }: { icon: LucideIcon; label: string; title?: string; stack?: boolean; className?: string; /** Why it has this value, beside it. */ note?: ReactNode; children: ReactNode }) {
   return (
     <div className={className ? `prop ${className}` : 'prop'}>
       <dt>
@@ -44,6 +44,7 @@ export function Prop({ icon: Icon, label, title, stack, className, children }: {
       <dd title={title} className={stack ? 'is-stack' : undefined}>
         {children}
       </dd>
+      {note != null && <dd className="prop-note">{note}</dd>}
     </div>
   );
 }

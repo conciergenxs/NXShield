@@ -3634,6 +3634,35 @@ button.barlist-row:hover {
   cursor: grab;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
+/* Blocked work in the In progress column: a red edge and the reason on top. */
+.board-card.has-blocker {
+  border-color: color-mix(in srgb, var(--red, #e5484d) 55%, var(--border));
+  box-shadow: inset 3px 0 0 var(--red, #e5484d);
+}
+.board-blocker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 10px 0 0;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--red, #e5484d) 12%, transparent);
+  color: var(--red-text, var(--red, #e5484d));
+  font-size: 13px;
+}
+.board-blocker svg {
+  flex-shrink: 0;
+}
+.board-blocker strong {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.board-blocker span {
+  min-width: 0;
+  color: var(--ink);
+  opacity: 0.8;
+}
 .board-card:hover {
   border-color: #edc4ff;
   box-shadow: 0 4px 14px -8px rgba(81, 0, 122, 0.25);
@@ -12016,6 +12045,33 @@ span.avatar {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
+.pk-kanban {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+/* The board's column, sized to the page instead of a fixed width, and as tall as its cards. */
+.board-col.pk-col {
+  width: auto;
+  max-height: none;
+  min-height: 0;
+}
+.pk-col .board-col-body {
+  overflow: visible;
+}
+.pk-col-empty {
+  margin-top: 12px;
+}
+@media (max-width: 860px) {
+  .pk-kanban {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* Stacked, what the client has to act on comes first. */
+  .pk-col.is-ready {
+    order: -1;
+  }
+}
 .pk-card {
   display: flex;
   flex-direction: column;
@@ -12378,6 +12434,10 @@ span.avatar {
 /* The step waiting on the client: one yellow block, its text on the left, its two buttons on the right. */
 .pt-tl-item.is-now .pt-tl-body {
   margin-top: 10px;
+}
+/* A button on its own in an entry (e.g. "View full report") keeps its own width, not the column's. */
+.pt-tl-body > .btn {
+  align-self: flex-start;
 }
 .pt-tl-ready {
   display: flex;
@@ -13038,5 +13098,2347 @@ span.avatar {
 @media (max-width: 620px) {
   .ns {
     margin: 16px 18px 0;
+  }
+}
+
+/* ---------- The first three steps as the page itself (New, Not started, the initial RCA) ----------
+   The client's report on top, the AI's work for this step in one tinted panel,
+   and one bar that says what happens next. Rows, not boxes: no lines between them. */
+.fs {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin: 0 28px;
+  padding: 28px 0 32px;
+}
+.fs > .tdl-banner {
+  margin: 0;
+}
+.fs-report-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.fs-report-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.fs-report-text {
+  max-width: 72ch;
+  margin: 12px 0 0;
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink);
+  white-space: pre-line;
+}
+.fs-report .attachments,
+.fs-report .request-notes {
+  margin-top: 16px;
+}
+/* Past the check, the report steps back: smaller, two lines until opened. */
+.fs-report.is-compact .fs-report-text {
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.fs-report-text.is-clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.fs-report-more {
+  margin-top: 8px;
+  font-size: 13.5px;
+}
+
+/* The AI's panel in the main column: the same tint as the side column's, with room to breathe. */
+.fs-panel.ai-group {
+  margin: 0;
+  padding: 18px 20px 14px;
+  border-radius: 16px;
+}
+.fs-panel .ai-group-head {
+  margin-bottom: 10px;
+  font-size: 13.5px;
+}
+.fs-panel .ns-working {
+  margin: 6px 0 8px;
+}
+/* Property rows with the AI's reason beside each value. */
+.props.is-rows.fs-props .prop {
+  grid-template-columns: 150px minmax(0, 250px) minmax(0, 1fr);
+  min-height: 40px;
+}
+.prop .prop-note {
+  margin: 0;
+  overflow: visible;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: normal;
+}
+@media (max-width: 860px) {
+  .props.is-rows.fs-props .prop {
+    grid-template-columns: 128px minmax(0, 1fr);
+  }
+  .props.is-rows.fs-props .prop-note {
+    grid-column: 2;
+    padding-bottom: 8px;
+  }
+}
+
+/* What the AI found, for QA to check: label over text, no lines. */
+.fs-found {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 4px 0 6px;
+}
+.fs-found dt {
+  font-size: 13px;
+  color: var(--muted);
+}
+.fs-found dd {
+  max-width: 72ch;
+  margin: 2px 0 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+/* Does it happen? Two answers as cards; the button below acts on the one picked. */
+.fs-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.fs-choice legend {
+  padding: 0;
+  margin-bottom: 12px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.fs-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.fs-option {
+  flex: 1 1 260px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.fs-option:hover {
+  border-color: var(--border-strong);
+}
+.fs-option.is-picked {
+  border-color: var(--purple);
+  background: var(--purple-subtle);
+}
+.fs-option input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--purple);
+}
+.fs-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fs-option strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.fs-option > span > span {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* The step's one bar: what happens next, and the button that does it. */
+.fs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
+  padding: 16px 18px 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+.fs-bar-next {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.fs-bar-next strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.fs-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* The running deadline in the side column: the time left first and large, the date under it. */
+.props.is-rows .prop.prop-deadline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 0 6px;
+}
+.props.is-rows .prop.prop-deadline dd {
+  overflow: visible;
+  white-space: normal;
+}
+.prop-deadline .prop-due {
+  padding: 0;
+}
+.prop-due-left {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--tone);
+}
+:root[data-theme='dark'] .prop-due-left {
+  color: var(--tone-solid);
+}
+.prop-due-when {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* The RCA's Edit sits on the panel's own heading line, not on a row of its own. */
+.fs-panel {
+  position: relative;
+}
+.fs-panel .rca-head.is-embedded {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  margin: 0;
+}
+.fs-panel:has(.rca-head.is-embedded) .ai-group-head {
+  padding-right: 96px;
+}
+.fs-panel .rca-block {
+  margin: 0;
+  padding: 0;
+}
+.fs-panel .rca-fields {
+  margin-top: 16px;
+}
+
+/* ---------- Step view, second pass ---------- */
+/* The step's heading: whose it is, what it is, and one line on how. */
+.fs-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fs-who {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--purple-dark);
+}
+.fs-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--ink);
+}
+.fs-lede {
+  max-width: 72ch;
+  margin: 2px 0 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+/* The report under it reads as the material for the step. */
+.fs-head + .fs-report,
+.fs-head + .tdl-banner {
+  margin-top: -4px;
+}
+.fs-report .media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 176px));
+}
+.fs-report .media-frame {
+  aspect-ratio: 16 / 9;
+}
+
+/* The AI's work: one card with a clear marker, not a tint. */
+.fs-card {
+  position: relative;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+.fs-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 12px;
+}
+.fs-card-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--purple-light);
+  color: var(--purple-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.fs-card-note {
+  flex-basis: 100%;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.fs-card .ns-working {
+  margin: 4px 0 6px;
+}
+
+/* Every value the PM can change looks like a field, before any hover. */
+.props.is-rows.fs-props .prop {
+  grid-template-columns: 150px 232px minmax(0, 1fr);
+  min-height: 46px;
+}
+.props.is-rows.fs-props .badge-select,
+.props.is-rows.fs-props .prop-edit,
+.props.is-rows.fs-props .prop-points {
+  display: block;
+  width: 100%;
+  margin-left: 0;
+}
+.props.is-rows.fs-props .badge-select-trigger,
+.props.is-rows.fs-props .prop-edit .dropdown-trigger,
+.props.is-rows.fs-props .assign-trigger,
+.props.is-rows.fs-props .prop-input {
+  width: 100%;
+  height: 36px;
+  margin-left: 0;
+  padding: 0 10px 0 8px;
+  justify-content: space-between;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.props.is-rows.fs-props .badge-select-trigger:hover,
+.props.is-rows.fs-props .prop-edit .dropdown-trigger:hover,
+.props.is-rows.fs-props .assign-trigger:hover,
+.props.is-rows.fs-props .prop-input:hover {
+  border-color: var(--purple-line, var(--purple));
+  background: var(--surface);
+}
+.props.is-rows.fs-props .badge-select-caret,
+.props.is-rows.fs-props .prop-edit .dropdown-caret {
+  opacity: 1;
+}
+.props.is-rows.fs-props .prop-note {
+  padding-left: 8px;
+}
+
+/* The step's bar stays in view at the bottom of the window. */
+.fs-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 6;
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--fg-page, var(--bg)) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-pop);
+}
+
+/* The RCA's Edit sits on the card's heading line. */
+.fs-card .rca-head.is-embedded {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  margin: 0;
+}
+.fs-card:has(.rca-head.is-embedded) .fs-card-head {
+  padding-right: 96px;
+}
+.fs-card .rca-block {
+  margin: 0;
+  padding: 0;
+}
+.fs-card .rca-fields {
+  margin-top: 4px;
+}
+
+/* What went to the client, in the side column: a few lines each until opened. */
+.aside-sent {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.aside-sent-title {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.aside-sent-empty {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.aside-sent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sent-item-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sent-item-meta {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.sent-item-body {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.sent-item-body p {
+  margin: 0;
+}
+.sent-item:not(.is-open) .sent-item-body {
+  max-height: 4.65em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
+}
+.sent-rca {
+  margin: 0;
+}
+.sent-rca dt {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.sent-rca dt:first-child {
+  margin-top: 0;
+}
+.sent-rca dd {
+  margin: 1px 0 0;
+}
+.sent-item-more {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.sent-item .attachments-block {
+  margin-top: 10px;
+}
+.sent-item .media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+/* People pickers read left to right like the other fields, with the same arrow. */
+.props.is-rows.fs-props .assign-trigger {
+  justify-content: flex-start;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23918d9e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.props.is-rows.fs-props .prop-points {
+  display: flex;
+}
+.props.is-rows.fs-props .prop-points .prop-input {
+  flex: 1;
+}
+.props.is-rows.fs-props .prop-points .prop-input {
+  /* The inline width fits the number in the side column; here it's a full field. */
+  width: 100% !important;
+}
+
+/* ---------- The AI's mark: an aurora edge, no symbol ----------
+   A conic gradient in the brand's purples, pink and blue drawn as the edge of
+   the tag (and as a small ring in the loader). It turns while the AI works. */
+@property --ai-turn {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 180deg;
+}
+:root {
+  --ai-aurora: conic-gradient(from var(--ai-turn), #6a4bff, #c94dff, #ff5fd2, #6f8cff, #6a4bff);
+  --ai-chip-fill: #f4f1fa;
+}
+:root[data-theme='dark'] {
+  --ai-chip-fill: #1d1a2b;
+}
+.ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 24px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(var(--ai-chip-fill), var(--ai-chip-fill)) padding-box, var(--ai-aurora) border-box;
+  color: var(--purple-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+.ai-chip.is-working {
+  animation: ai-turn 2.4s linear infinite;
+}
+@keyframes ai-turn {
+  to {
+    --ai-turn: 540deg;
+  }
+}
+/* The loader's mark: the same aurora as a thin ring. */
+.ai-ring {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--ai-aurora);
+  -webkit-mask: radial-gradient(circle, transparent 52%, #000 56%);
+  mask: radial-gradient(circle, transparent 52%, #000 56%);
+  animation: ai-turn 1.6s linear infinite;
+}
+.ns-working-icon.ai-ring {
+  margin-top: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-chip.is-working,
+  .ai-ring {
+    animation: none;
+  }
+}
+
+/* Properties card spacing: room between the heading and the rows, between rows, and between columns. */
+.fs-card {
+  padding: 24px 26px 24px;
+}
+.fs-card-head {
+  gap: 8px 12px;
+  margin-bottom: 22px;
+}
+.fs-card-note {
+  margin-top: 2px;
+}
+.props.is-rows.fs-props {
+  gap: 12px;
+}
+.props.is-rows.fs-props .prop {
+  grid-template-columns: 150px 240px minmax(0, 1fr);
+  column-gap: 24px;
+  min-height: 40px;
+}
+.props.is-rows.fs-props .badge-select-trigger,
+.props.is-rows.fs-props .prop-edit .dropdown-trigger,
+.props.is-rows.fs-props .assign-trigger,
+.props.is-rows.fs-props .prop-input {
+  height: 40px;
+}
+.props.is-rows.fs-props .prop-note {
+  padding-left: 0;
+}
+
+/* The step heading is two short lines; the client's report reads at body size. */
+.fs-title {
+  font-size: 20px;
+}
+.fs-report-text {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.fs-report.is-compact .fs-report-text {
+  font-size: 14.5px;
+}
+
+/* ---------- Step heading: the person as a small tag, the step as the headline ---------- */
+.fs-who {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 7px;
+  height: 26px;
+  margin: 0;
+  padding: 0 11px 0 4px;
+  border-radius: 999px;
+  background: var(--purple-light);
+  color: var(--purple-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.fs-head {
+  gap: 10px;
+}
+.fs-title {
+  font-size: 28px;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+/* ---------- The AI card: a faded aurora outline and a soft glow from its top corner ---------- */
+:root {
+  --ai-card-fill: #fbf9fe;
+  --ai-card-glow: rgba(201, 77, 255, 0.08);
+  --ai-card-edge: conic-gradient(from 200deg, rgba(106, 75, 255, 0.35), rgba(201, 77, 255, 0.35), rgba(255, 95, 210, 0.25), rgba(111, 140, 255, 0.32), rgba(106, 75, 255, 0.35));
+}
+:root[data-theme='dark'] {
+  --ai-card-fill: #17141f;
+  --ai-card-glow: rgba(201, 77, 255, 0.12);
+  --ai-card-edge: conic-gradient(from 200deg, rgba(106, 75, 255, 0.4), rgba(201, 77, 255, 0.4), rgba(255, 95, 210, 0.28), rgba(111, 140, 255, 0.36), rgba(106, 75, 255, 0.4));
+  --ai-chip-fill: #211c33;
+}
+.fs-card {
+  border: 1px solid transparent;
+  background:
+    radial-gradient(ellipse 55% 70% at 0% 0%, var(--ai-card-glow) 0%, transparent 70%) padding-box,
+    linear-gradient(var(--ai-card-fill), var(--ai-card-fill)) padding-box,
+    var(--ai-card-edge) border-box;
+}
+
+/* The step bar wears the AI card's edge: a faded aurora outline and a soft glow. */
+:root {
+  --fs-bar-fill: #ffffff;
+}
+:root[data-theme='dark'] {
+  --fs-bar-fill: #13101c;
+}
+.fs-bar {
+  border: 1px solid transparent;
+  background:
+    radial-gradient(ellipse 40% 120% at 0% 0%, var(--ai-card-glow) 0%, transparent 70%) padding-box,
+    linear-gradient(var(--fs-bar-fill), var(--fs-bar-fill)) padding-box,
+    var(--ai-card-edge) border-box;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The client's report runs the column's width. */
+.fs-report-text {
+  max-width: none;
+}
+
+/* Their files as small tiles: a thumbnail beside the name and size. */
+.fs-report .media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fs-report .media-grid > li {
+  width: 260px;
+}
+.fs-report .media-tile {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 6px;
+  border-radius: 12px;
+}
+.fs-report .media-frame {
+  flex: none;
+  width: 72px;
+  aspect-ratio: 3 / 2;
+  border-radius: 8px;
+}
+.fs-report .media-play {
+  width: 24px;
+  height: 24px;
+}
+.fs-report .media-play svg {
+  width: 12px;
+  height: 12px;
+}
+.fs-report .media-caption {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 0 6px 0 0;
+  font-size: 13.5px;
+}
+.fs-report .media-caption .truncate {
+  max-width: 100%;
+}
+.fs-report .media-caption .muted {
+  font-size: 12.5px;
+  font-weight: 400;
+}
+/* Text inside the AI cards runs the card's width too. */
+.fs-found dd,
+.fs-card .rca-fields dd {
+  max-width: none;
+}
+
+/* ---------- Step bar, final: dark glass, a shade lighter than the page so it isn't a black slab ---------- */
+:root {
+  --fs-bar-glass: rgba(255, 255, 255, 0.9);
+  --fs-bar-line: var(--border-strong);
+}
+:root[data-theme='dark'] {
+  --fs-bar-glass: rgba(34, 30, 48, 0.88);
+  --fs-bar-line: rgba(255, 255, 255, 0.1);
+}
+.fs-bar {
+  border: 1px solid var(--fs-bar-line);
+  background: var(--fs-bar-glass);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- The initial RCA, changed by talking to the AI ---------- */
+/* No Edit in the card: its heading line needs no room for one. */
+.fs-card .rca-head.is-embedded {
+  display: none;
+}
+.fs-card:has(.rca-head.is-embedded) .fs-card-head {
+  padding-right: 0;
+}
+
+/* Being rewritten: the words stay in place and a light passes over them. */
+.rca-fields dd.is-rewriting {
+  color: transparent;
+  background-image: linear-gradient(100deg, var(--muted) 0%, var(--muted) 38%, #e9c2ff 48%, #ffffff 50%, #e9c2ff 52%, var(--muted) 62%, var(--muted) 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: rca-shimmer 1.4s linear infinite;
+}
+@keyframes rca-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+/* Rewritten: the new words come into focus in the aurora colours, then settle to the page's ink. */
+.rca-fields dd.is-changed {
+  background-image: linear-gradient(90deg, #8f6bff, #c94dff 45%, #ff5fd2);
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: rca-reveal 1.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes rca-reveal {
+  0% {
+    color: transparent;
+    opacity: 0.15;
+    filter: blur(6px);
+    transform: translateY(3px);
+  }
+  35% {
+    color: transparent;
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+  100% {
+    color: var(--ink);
+  }
+}
+
+/* The conversation: what was asked, on the right; what the AI did, on the left. */
+.rca-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 26px;
+}
+.rca-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rca-thread li {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: ns-in 0.3s ease-out;
+}
+.rca-me {
+  align-self: flex-end;
+  max-width: 75%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--purple-light);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.rca-said {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.rca-said .ai-ring {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+}
+.ai-ring.is-still {
+  animation: none;
+}
+.rca-undo {
+  margin-left: 8px;
+  font-size: 13.5px;
+}
+
+/* The composer: roomy, with the AI's aurora edge, quick asks and send on its bottom row. */
+.rca-composer {
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: linear-gradient(var(--surface), var(--surface)) padding-box, var(--ai-aurora) border-box;
+  transition: box-shadow 0.15s;
+}
+:root[data-theme='dark'] .rca-composer {
+  background: linear-gradient(#120f1a, #120f1a) padding-box, var(--ai-aurora) border-box;
+}
+.rca-composer:focus-within {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--purple) 16%, transparent);
+}
+.rca-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  padding: 14px 16px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+.rca-composer-input::placeholder {
+  color: var(--muted);
+}
+.rca-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+}
+.rca-composer-asks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rca-ask-chip {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.rca-ask-chip:hover:not(:disabled) {
+  border-color: var(--purple);
+  color: var(--ink);
+}
+.rca-ask-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rca-composer-send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #8f3bff, #c94dff);
+  color: #fff;
+  cursor: pointer;
+}
+.rca-composer-send:disabled {
+  background: var(--surface-sunken);
+  color: var(--muted);
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rca-fields dd.is-rewriting,
+  .rca-fields dd.is-changed,
+  .rca-thread li {
+    animation: none;
+  }
+  .rca-fields dd.is-rewriting {
+    color: var(--muted);
+  }
+}
+/* The thread keeps every exchange in a fixed height and scrolls; the RCA above it stays put. */
+.rca-thread {
+  max-height: 232px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.rca-thread.is-overflowing {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 28px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 28px);
+  padding-top: 12px;
+}
+
+/* ---------- The initial RCA as a filled-in form table ----------
+   One framed table: a tinted label column (each label with what it answers)
+   and the AI's words beside it. It reads as finished text, not as inputs. */
+.rca-fields.rca-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+.rca-fields.rca-form > div {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+}
+.rca-fields.rca-form > div + div {
+  border-top: 1px solid var(--border);
+}
+.rca-fields.rca-form dt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 16px 18px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.rca-fields.rca-form dt small {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.rca-fields.rca-form dd {
+  margin: 0;
+  padding: 16px 20px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.rca-fields.rca-form dd.fix-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+/* The AI's rewrite effects stay inside the cell. */
+.rca-fields.rca-form dd.is-changed,
+.rca-fields.rca-form dd.is-rewriting {
+  margin: 0;
+  padding: 16px 20px;
+  border-radius: 0;
+}
+@media (max-width: 760px) {
+  .rca-fields.rca-form > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rca-fields.rca-form dt {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+  }
+}
+.rca-fields.rca-form {
+  width: 100%;
+  max-width: none;
+}
+.rca-fields.rca-form dd {
+  max-width: none;
+}
+/* In the step card the RCA block spans the card, not the reading measure used elsewhere. */
+.fs-card .rca-block {
+  max-width: none;
+  width: 100%;
+}
+
+/* ---------- Ticket header: Move to and the step's main button ---------- */
+.tdl-actions {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.tdl-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tdl-primary {
+  display: contents;
+}
+.tdl-next {
+  max-width: 340px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: right;
+}
+.tdl-next:empty {
+  display: none;
+}
+.tdl-next strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* The client's report folds from a bare chevron beside its byline: down when open, up when folded. */
+.fs-report-meta {
+  min-height: 32px;
+}
+.fs-report-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.fs-report-toggle:hover {
+  color: var(--ink);
+}
+.fs-report-toggle:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.fs-report-toggle svg {
+  transition: transform 0.18s ease;
+}
+.fs-report.is-folded .fs-report-toggle svg {
+  transform: rotate(180deg);
+}
+.fs-report-body {
+  animation: ns-in 0.2s ease-out;
+}
+
+/* The step bar sits at the end of the step, in the flow of the page. */
+.fs-bar {
+  position: static;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.fs-bar-next:empty {
+  display: none;
+}
+
+/* ---------- The AI's code fix ---------- */
+.fix-meta {
+  margin-bottom: 18px;
+}
+.fix-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.fix-where code,
+.fix-file-path {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.fix-where code {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.fix-files {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+.fix-files-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.fix-plus {
+  color: var(--green);
+  font-weight: 600;
+}
+.fix-minus {
+  color: var(--red);
+  font-weight: 600;
+}
+.fix-file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fix-file + .fix-file {
+  border-top: 1px solid var(--border);
+}
+.fix-file-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 18px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.fix-file-head:hover {
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.fix-file-caret {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.fix-file-head[aria-expanded='false'] .fix-file-caret {
+  transform: rotate(-90deg);
+}
+.fix-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fix-file-count {
+  display: flex;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.fix-file-note {
+  margin: 0;
+  padding: 0 18px 10px 43px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.fix-diff {
+  display: flex;
+  flex-direction: column;
+  margin: 0 18px 16px 18px;
+  padding: 8px 0;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+.fix-line {
+  display: block;
+  padding: 0 14px 0 0;
+  white-space: pre;
+}
+.fix-sign {
+  display: inline-block;
+  width: 28px;
+  text-align: center;
+  color: var(--muted);
+}
+.fix-line.is-add {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--ink);
+}
+.fix-line.is-add .fix-sign {
+  color: var(--green);
+}
+.fix-line.is-del {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--ink-2);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--red) 50%, transparent);
+}
+.fix-line.is-del .fix-sign {
+  color: var(--red);
+}
+/* While the AI rewrites the code, the files dim and a light passes over them; a changed file glows once. */
+.fix-files.is-rewriting .fix-file-list {
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+.fix-file.is-changed {
+  animation: fix-changed 1.8s ease-out;
+}
+@keyframes fix-changed {
+  0%,
+  30% {
+    box-shadow: inset 3px 0 0 var(--purple);
+    background: color-mix(in srgb, var(--purple) 8%, transparent);
+  }
+  100% {
+    box-shadow: inset 3px 0 0 transparent;
+    background: transparent;
+  }
+}
+.fs-card .rca-chat {
+  margin-top: 20px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fix-file.is-changed {
+    animation: none;
+  }
+}
+
+/* A plain step card: facts about the step, not the AI's work. */
+.fs-plain {
+  padding: 22px 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+.fs-plain-title {
+  margin: 0 0 16px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.fix-link {
+  font-weight: 500;
+  color: var(--purple-dark);
+}
+.fix-changed-line {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.fix-changed-line code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.fix-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+.fs-rca-flag {
+  display: inline-block;
+  margin-top: 8px;
+  margin-right: 16px;
+  font-size: 13.5px;
+}
+.rca-form dd .attachments-block {
+  margin-top: 0;
+}
+
+/* ---------- Client Portal timeline, second pass ----------
+   Each moment gets an icon in its marker; the deliverables (the initial RCA,
+   the fix) are framed blocks in the same form table NXS uses inside. */
+.pt-tl-item {
+  padding-left: 48px;
+}
+.pt-tl-item:not(.is-last)::before {
+  top: 34px;
+  left: 15.5px;
+}
+.pt-tl-marker {
+  width: 32px;
+  height: 32px;
+  margin-top: -5px;
+  background: var(--purple-light);
+  color: var(--purple-dark);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--purple) 35%, transparent);
+}
+.pt-tl-marker::after {
+  content: none;
+}
+.pt-tl-item.is-small .pt-tl-marker {
+  width: 32px;
+  height: 22px;
+  margin-top: 0;
+  box-shadow: none;
+}
+.pt-tl-item.is-small .pt-tl-marker::after {
+  content: '';
+}
+.pt-tl-item.is-small:not(.is-last)::before {
+  top: 22px;
+}
+.pt-tl-item.is-next .pt-tl-marker {
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  border: 0;
+  outline: 1.5px dashed var(--border-strong);
+  outline-offset: -1.5px;
+}
+.pt-tl-item.is-now .pt-tl-marker {
+  background: color-mix(in srgb, #f2c200 16%, transparent);
+  color: var(--yellow);
+  box-shadow: inset 0 0 0 1.5px #f2c200, 0 0 0 5px color-mix(in srgb, #f2c200 12%, transparent);
+}
+.pt-tl-item.is-now .pt-tl-marker::after {
+  content: none;
+}
+.pt-tl-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+.pt-tl-item.is-small .pt-tl-title {
+  font-family: var(--font);
+}
+.pt-tl-body {
+  margin-top: 10px;
+}
+.pt-tl-text {
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: none;
+}
+/* NXS's reply, quoted. */
+.pt-tl-quote {
+  margin: 0;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid color-mix(in srgb, var(--purple) 45%, transparent);
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.6;
+}
+/* NXS's reply signed off underneath, like a support email: ~ name, role. */
+.pt-tl-letter {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pt-tl-sign {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 18px;
+}
+.pt-tl-sign-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.pt-tl-sign-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.pt-tl-sign-role {
+  font-size: 12.5px;
+  color: var(--ink-3, var(--ink-2));
+}
+/* A deliverable as a framed block. */
+.pt-tl-block .rca-form {
+  width: 100%;
+}
+.pt-tl-block .rca-form dd {
+  max-width: none;
+}
+.pt-tl-ready .rca-form {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+.pt-tl-ready .rca-form dd .attachments-block,
+.pt-tl-block .rca-form dd .attachments-block {
+  margin-top: 0;
+}
+.pt-tl-ready-text {
+  max-width: none;
+}
+
+/* ---------- Replies on the client's timeline ---------- */
+.pt-tl-head.has-action {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.pt-tl-head.has-action > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pt-tl-ready {
+  padding: 14px;
+}
+.pt-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.pt-reply-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  border-left: 2px solid var(--border);
+}
+.pt-reply {
+  display: flex;
+  gap: 10px;
+}
+.pt-reply-body {
+  min-width: 0;
+}
+.pt-reply-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 13.5px;
+}
+.pt-reply-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.pt-reply-meta time {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pt-reply.is-nxs .pt-reply-meta strong {
+  color: var(--purple-dark);
+}
+.pt-reply-text {
+  margin: 2px 0 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-line;
+}
+.pt-reply-open {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.pt-reply-open:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+/* Inside NXS: what a client comment replied to. */
+.comment-on {
+  margin: 2px 0 4px;
+  font-size: 12.5px;
+  color: var(--purple-dark);
+}
+.comment-reply {
+  margin-top: 4px;
+  font-size: 13px;
+}
+.comment-replying {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* Proof in a release row: the same small file tiles as the client's report. */
+.rca-form .media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rca-form .media-grid > li {
+  width: 260px;
+  max-width: 100%;
+}
+.rca-form .media-tile {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 6px;
+  border-radius: 12px;
+}
+.rca-form .media-frame {
+  flex: none;
+  width: 72px;
+  aspect-ratio: 3 / 2;
+  border-radius: 8px;
+}
+.rca-form .media-play {
+  width: 24px;
+  height: 24px;
+}
+.rca-form .media-caption {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 0 6px 0 0;
+  font-size: 13.5px;
+}
+.rca-form .media-caption .truncate {
+  max-width: 100%;
+}
+.rca-form .media-caption .muted {
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+/* Release notes on the QA step: a field with a Generate with AI button on its label line. */
+.fs-notes-field {
+  position: relative;
+}
+.fs-generate {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(var(--ai-chip-fill), var(--ai-chip-fill)) padding-box, var(--ai-aurora) border-box;
+  color: var(--purple-dark);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fs-generate .ai-ring {
+  width: 12px;
+  height: 12px;
+  animation: none;
+}
+.fs-generate.is-working .ai-ring {
+  animation: ai-turn 1.2s linear infinite;
+}
+.fs-generate:disabled {
+  cursor: default;
+}
+/* The developer's one field: the image to ship, editable. */
+.fs-tag-input {
+  width: 100%;
+  max-width: 560px;
+  height: 38px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.fix-changed-line.is-error {
+  color: var(--red);
+}
+
+/* Inside NXS: the client's replies, grouped by the part of their timeline they're on. */
+.comment-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 6px;
+}
+.comment-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.comment-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.comment-group-head strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.comment-group .comment-list {
+  margin: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+}
+.comment-who {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.comment-group-reply {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.comment-group-reply > :first-child {
+  align-self: stretch;
+}
+.comment-group-open {
+  margin-top: 2px;
+}
+
+/* Extra tools sit at the right end of the rich input's bottom bar. */
+.rich-input-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ---------- Replies, as a thread ----------
+   One quiet panel under the entry: each reply with its face, a line joining
+   the faces down the thread, NXS as its mark, and a prompt to reply at the end. */
+.pt-replies {
+  margin-top: 12px;
+}
+.pt-replies.has-thread {
+  padding: 16px 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.pt-reply-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+}
+.pt-reply {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  column-gap: 12px;
+  padding-bottom: 18px;
+}
+/* The thread line, from one face to the next. */
+.pt-reply:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 36px;
+  bottom: 4px;
+  left: 14.5px;
+  width: 1.5px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.pt-reply-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #9b3bff, #c94dff);
+  color: #fff;
+}
+.pt-reply-body {
+  min-width: 0;
+  padding-top: 1px;
+}
+.pt-reply-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 7px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.pt-reply-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.pt-reply.is-nxs .pt-reply-meta strong {
+  color: var(--ink);
+}
+.pt-reply-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--purple-light);
+  color: var(--purple-dark);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.pt-reply-meta time {
+  font-size: 13px;
+}
+.pt-reply-text {
+  margin: 3px 0 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre-line;
+}
+/* The prompt to reply: your face and a field-like line. */
+.pt-reply-prompt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14.5px;
+  text-align: left;
+  cursor: text;
+}
+.pt-reply-prompt .pt-reply-field {
+  flex: 1;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  transition: border-color 0.12s;
+}
+.pt-reply-prompt:hover .pt-reply-field {
+  border-color: var(--border-strong);
+}
+.pt-replies:not(.has-thread) .pt-reply-prompt {
+  max-width: 560px;
+}
+.pt-replies.has-thread .pt-reply-list + .pt-reply-prompt,
+.pt-replies.has-thread .pt-reply-list + .pt-reply-compose {
+  margin-top: 2px;
+}
+.pt-reply-compose {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.pt-reply-compose > :first-child {
+  align-self: stretch;
+}
+
+/* Comments under a timeline entry: the same plain list as anywhere else, no panel. */
+.pt-replies,
+.pt-replies.has-thread {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.pt-comment-list {
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+}
+
+/* ---------- Comments as a thread ----------
+   No box: each comment's face, joined to the next by a thin line, so a back
+   and forth reads as one conversation. NXS speaks as its mark. */
+.comment-list.is-thread {
+  gap: 0;
+}
+.comment-list.is-thread .comment {
+  position: relative;
+  padding-bottom: 20px;
+}
+.comment-list.is-thread .comment:last-child {
+  padding-bottom: 0;
+}
+.comment-list.is-thread .comment:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 34px;
+  bottom: 6px;
+  left: 13.25px;
+  width: 1.5px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.comment-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #9b3bff, #c94dff);
+  color: #fff;
+}
+.comment.is-nxs .comment-name {
+  color: var(--purple-dark);
+}
+/* Inside NXS the group is already framed: no second line down its side. */
+.comment-group .comment-list.is-thread {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* ---------- Board: three cards a column, then View all ----------
+   Columns grow with their cards instead of scrolling inside; past three,
+   a full-width button (Notion-like) opens the rest in place. */
+.board {
+  align-items: flex-start;
+}
+.board-col {
+  max-height: none;
+  min-height: 0;
+}
+.board-col-body {
+  overflow: visible;
+}
+.board-view-all {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  margin-top: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.board-view-all:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+.board-view-all:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.board-view-all svg {
+  color: var(--muted);
+}
+.board-view-all-caret {
+  transition: transform 0.15s;
+}
+.board-view-all-caret.is-open {
+  transform: rotate(180deg);
+}
+
+/* The blocked step: the card reads as a stop, in the stage's orange. */
+.fs-blocked {
+  border-color: color-mix(in srgb, var(--orange) 45%, var(--border));
+  background: color-mix(in srgb, var(--orange-bg, #fff2e0) 30%, var(--surface-soft));
+}
+.fs-blocked .fs-plain-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--orange);
+}
+.fs-blocked .field {
+  margin-top: 16px;
+}
+
+/* ---------- Overview: your turn and others' turn ----------
+   Two columns of the same card. Each card is a fixed 148px so three of them
+   always fill the list; the list keeps that height when it opens and scrolls
+   instead, and both columns end on their "View all" button. */
+.ovt-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.ovt-column {
+  --ovt-card-h: 148px;
+  --ovt-gap: 8px;
+  padding: 6px 6px 8px;
+}
+.ovt-column.is-mine {
+  border-color: color-mix(in srgb, var(--purple) 45%, var(--fg-glass-line));
+}
+.ovt-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ovt-gap);
+  height: calc(var(--ovt-card-h) * 3 + var(--ovt-gap) * 2);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+.ovt-list.is-open {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ovt-list.ovx-empty {
+  flex: none;
+  min-height: 0;
+  margin: 0;
+}
+.ovt-list > li {
+  flex: none;
+}
+.ovt-more {
+  margin-top: var(--ovt-gap);
+}
+.ovt-card {
+  display: grid;
+  grid-template-rows: 22px 40px auto;
+  row-gap: 8px;
+  height: var(--ovt-card-h);
+  padding: 12px 14px;
+  border: 1px solid var(--fg-rule);
+  border-radius: 12px;
+  background: var(--fg-table);
+  color: var(--fg-ink);
+  transition: border-color 0.12s;
+}
+.ovt-card:hover {
+  border-color: var(--purple);
+  text-decoration: none;
+}
+.ovt-card:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.ovt-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.ovt-card-top .badge {
+  flex: none;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.ovt-card-where {
+  min-width: 0;
+  color: var(--fg-muted);
+}
+.ovt-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.ovt-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--fg-rule);
+}
+.ovt-card-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.ovt-card-step .badge {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.ovt-card-who {
+  flex: none;
+  font-weight: 600;
+}
+.ovt-card-do {
+  overflow: hidden;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ovt-card-do.is-mine {
+  color: var(--fg-ink);
+  font-weight: 600;
+}
+.ovt-card-due {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+  text-align: right;
+}
+.ovt-card-due strong {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ovt-card-due small {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.ovt-card.is-soon .ovt-card-due strong {
+  color: var(--orange);
+}
+.ovt-card.is-late .ovt-card-due strong {
+  color: var(--red);
+}
+
+/* ---------- Overview: asset health, a card per client ---------- */
+.ovt-health {
+  margin-top: 32px;
+}
+.ovt-health-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.ovt-health-sum {
+  color: var(--fg-muted);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.ovt-health-sum.is-issue {
+  color: var(--orange);
+}
+.ovt-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.ovt-client {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px 14px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 18px;
+  background: var(--fg-glass);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.ovt-client-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.ovt-client-name {
+  color: var(--fg-ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.ovt-client-sub {
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.ovt-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ovt-asset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0;
+}
+.ovt-asset + .ovt-asset {
+  border-top: 1px solid var(--fg-rule);
+}
+.ovt-asset-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.ovt-asset-name {
+  min-width: 0;
+  color: var(--fg-ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.ovt-asset-meta {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.ovt-asset-state {
+  color: var(--tone);
+  font-weight: 600;
+}
+:root[data-theme='dark'] .ovt-asset-state {
+  color: var(--tone-solid);
+}
+.ovt-asset-uptime {
+  color: var(--fg-ink);
+  font-weight: 600;
+}
+.ovt-asset-day {
+  color: var(--fg-muted);
+}
+.ovt-bars {
+  height: 16px;
+}
+.ovt-axis {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 2px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .ovt-columns,
+  .ovt-health-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .ovt-column {
+    --ovt-card-h: 156px;
+  }
+  .ovt-card-where {
+    display: none;
+  }
+}
+
+/* ---------- Full RCA report: two shapes, one rhythm ----------
+   Every section opens on a hairline with its number in a chip. Two-part
+   content is a label/value list; three or more columns is a table. Both share
+   the same frame, padding and type size, so the page reads as one document. */
+.report-section {
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 0.5px solid var(--border);
+}
+.report-head + .report-section {
+  border-top: 0;
+  padding-top: 0;
+}
+.report-h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 18px;
+}
+.report-h2-n {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme='dark'] .report-h2-n {
+  color: #e2a6ff;
+}
+.report-h3 {
+  margin: 22px 0 10px;
+  font-size: 14.5px;
+}
+.report-kv {
+  margin: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 0.5px var(--border-strong);
+}
+.report-kv > div {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 16px;
+  padding: 11px 14px;
+  border-bottom: 0.5px solid var(--border);
+}
+.report-kv > div:last-child {
+  border-bottom: 0;
+}
+.report-kv dt {
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+.report-kv dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.report-table {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.report-table th,
+.report-table td {
+  padding: 11px 14px;
+}
+.report-table th {
+  font-size: 13px;
+}
+.report-table td:first-child {
+  color: var(--ink);
+}
+.report-table .is-tight {
+  width: 1%;
+  white-space: nowrap;
+}
+.report-table td.is-tight {
+  color: var(--ink-2);
+}
+.report-method {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.report-callout {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--purple) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--purple);
+}
+.report-callout-label {
+  color: var(--purple);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+:root[data-theme='dark'] .report-callout-label {
+  color: #e2a6ff;
+}
+.report-callout-text {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+.report-points,
+.report-steps {
+  gap: 8px;
+  font-size: 14.5px;
+}
+.report-section .attachments-block {
+  margin-top: 0;
+}
+.report-note {
+  margin-top: 10px;
+  line-height: 1.5;
+}
+@media (max-width: 700px) {
+  .report-kv > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .report-table .is-tight {
+    white-space: normal;
   }
 }

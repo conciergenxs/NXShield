@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useRef, useState, type ClipboardEvent, type DragEvent , type ReactNode } from 'react';
 import { FileCode, FileText, Image as ImageIcon, Paperclip, Video, X, type LucideIcon } from 'lucide-react';
 import type { Attachment } from '../types';
 import { TextArea, cx } from './ui';
@@ -32,6 +32,8 @@ interface Props {
   rows?: number;
   invalid?: boolean;
   autoFocus?: boolean;
+  /** Extra controls at the right end of the box's bottom bar, like a Generate with AI button. */
+  tools?: ReactNode;
 }
 
 /**
@@ -39,7 +41,7 @@ interface Props {
  * text, then paste a screenshot, drop files on it or pick them with the clip.
  * Attachments sit inside the box, under the text.
  */
-export function RichInput({ id, value, onChange, files, onFilesChange, placeholder, rows = 4, invalid, autoFocus }: Props) {
+export function RichInput({ id, value, onChange, files, onFilesChange, placeholder, rows = 4, invalid, autoFocus, tools }: Props) {
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const add = (list: FileList | File[]) => {
@@ -112,6 +114,7 @@ export function RichInput({ id, value, onChange, files, onFilesChange, placehold
           Add screenshots or files
         </button>
         <span className="rich-input-hint">or paste and drop them here</span>
+        {tools && <span className="rich-input-tools">{tools}</span>}
         <input
           ref={picker}
           id={`${id}-files`}

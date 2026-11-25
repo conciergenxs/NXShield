@@ -1,5 +1,4 @@
-import type { Asset, AssetCategory, Category, Severity, TaskType } from '../types';
-import { BACKEND_ID, BUSINESS_IDS, FRONTEND_ID, QA_ID } from '../data/seed';
+import type { Asset, AssetCategory, Category, Client, Severity, TaskType } from '../types';
 
 /*
  * The AI's first read of a ticket, the moment a client sends it in with only
@@ -39,13 +38,11 @@ export function guessSeverity(title: string, description: string): Severity {
   return 'low';
 }
 
-/** Who works on it, as the SLA docs split the PICs: business issues go to a
- *  business PIC (Bhisma or Adra; `pick` chooses between them), everything else
- *  by the kind of work: backend to Mega, frontend to Alfiana. */
-export function routeTo(category: Category, taskType: TaskType, pick = 0): string {
-  if (category === 'business') return BUSINESS_IDS[Math.abs(pick) % BUSINESS_IDS.length];
-  return taskType === 'backend' ? BACKEND_ID : FRONTEND_ID;
-}
+/** Who works on it: the client's frontend or backend developer, by the kind of work. */
+export const routeTo = (client: Pick<Client, 'devs'>, taskType: TaskType): string => client.devs[taskType];
 
-/** Every ticket goes to QA first. */
-export const testerFor = () => QA_ID;
+/** Who checks and tests it: the client's QA. */
+export const testerFor = (client: Pick<Client, 'testerId'>) => client.testerId;
+
+/** Who reviews a new ticket's properties first: the client's PM. */
+export const pmFor = (client: Pick<Client, 'accountManagerId'>) => client.accountManagerId;

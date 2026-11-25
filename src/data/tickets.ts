@@ -14,10 +14,12 @@ import type {
 } from '../types';
 import { startOfDay } from '../lib/format';
 import { autoPlan, taskTypeFor } from '../lib/plan';
-import { routeTo } from '../lib/intake';
+import { pmFor, routeTo, testerFor } from '../lib/intake';
 import { problemOf, responseDraftOf } from '../lib/rcaAi';
+import { imageTagOf, releaseNotesOf } from '../lib/release';
+import { REPO } from '../lib/codeFix';
 import { PROGRESS_EVERY_MINS, PROGRESS_STAGES, draftDiagnosis, progressUpdate, stepUpdate } from '../lib/assist';
-import { DAY, HOUR, LOADED_AT, LOGGER_IDS, MIN, QA_ID, assets, clients, policies, team } from './seed';
+import { DAY, HOUR, LOADED_AT, MIN, assets, clients, policies, team } from './seed';
 
 const NOW = LOADED_AT;
 
@@ -28,16 +30,29 @@ const clientById = new Map(clients.map((c) => [c.id, c]));
 const reporterName = (d: Draft) => clientById.get(d.clientId)?.users.find((u) => u.id === d.reporterId)?.name ?? 'the client';
 
 const teamActor = (id: string): Actor => ({ type: 'team', id });
+const AI: Actor = { type: 'system' };
 
-/** When the initial RCA went out: a while after the first reply, well inside T+3, before any later step. */
-function rcaAt(d: Draft): number | null {
-  const fr = d.firstRespondedAt;
-  if (fr == null || d.status === 'new' || !d.assigneeId) return null;
+/* Who does what on a client's tickets: the PM reviews, QA checks and tests, a developer fixes. */
+const pmOf = (d: Pick<Draft, 'clientId'>) => pmFor(clientById.get(d.clientId)!);
+const testerOf = (d: Pick<Draft, 'clientId'>) => testerFor(clientById.get(d.clientId)!);
+
+/** When QA confirmed the issue and it went to the developer: a little after the PM's review. */
+function qaAt(d: Draft): number | null {
+  const rv = d.reviewedAt;
+  if (rv == null || d.status === 'new' || d.status === 'not_started') return null;
   const end = d.firstResolvedAt ?? d.resolvedAt ?? d.canceledAt ?? NOW;
-  return fr + Math.min(45 * MIN, Math.max(60_000, (end - fr) * 0.2));
+  return rv + Math.min(20 * MIN, Math.max(2 * MIN, (end - rv) * 0.15));
 }
 
-/** The initial response, as the AI drafted it and QA sent it. */
+/** When the developer sent the initial RCA: after QA's check, well inside T+3, before any later step. */
+function rcaAt(d: Draft): number | null {
+  const qa = qaAt(d);
+  if (qa == null || !d.assigneeId || d.rcaPending) return null;
+  const end = d.firstResolvedAt ?? d.resolvedAt ?? d.canceledAt ?? NOW;
+  return qa + Math.min(40 * MIN, Math.max(60_000, (end - qa) * 0.2));
+}
+
+/** The initial response, as the AI wrote and sent it the moment the ticket came in. */
 function responseText(d: Draft): string {
   const reporter = clientById.get(d.clientId)?.users.find((u) => u.id === d.reporterId);
   return responseDraftOf(d, assetById.get(d.assetId)?.name ?? 'your asset', reporter?.name.split(' ')[0] ?? 'there', d.createdAt + 3 * HOUR);
@@ -54,7 +69,16 @@ interface Draft {
   status: TicketStatus;
   assigneeId: string | null;
   createdAt: number;
+  /** The AI's initial response: sent the moment the ticket came in. */
   firstRespondedAt: number | null;
+  /** When the PM reviewed the properties and it moved to Not started. */
+  reviewedAt: number | null;
+  /** In progress, but the developer hasn't sent the initial RCA yet. */
+  rcaPending?: boolean;
+  security?: boolean;
+  recurring?: boolean;
+  /** QA passed it on staging: their release notes, and when. */
+  passed?: { note: string; at: number };
   resolvedAt: number | null;
   /** Set when the ticket was resolved once and later reopened. */
   firstResolvedAt?: number;
@@ -75,6 +99,8 @@ interface Draft {
 }
 
 let seq = 0;
+/** Stands in for the release's id in sample replies, until the release exists. */
+const RELEASE = '__release';
 const nextId = (prefix: string) => `${prefix}${++seq}`;
 
 
@@ -87,22 +113,23 @@ function buildActivity(d: Draft): Activity[] {
   if (d.channel === 'portal') push(d.createdAt, reporter, 'created', 'Submitted from the Client Portal');
   else push(d.createdAt, teamActor(d.triageBy), 'created', `Logged by NXS on behalf of ${reporterName(d)}`);
 
-  const fr = d.firstRespondedAt;
   const firstDone = d.firstResolvedAt ?? d.resolvedAt;
   const end = firstDone ?? d.canceledAt ?? NOW;
-  // The AI reads the ticket the moment it comes in and suggests who should work on it; QA checks it first.
+  const QA = testerOf(d);
+  // The AI reads the ticket the moment it comes in and sets its properties; the PM reviews them first.
   if (d.assigneeId) {
     const m = memberById.get(d.assigneeId)!;
-    push(d.createdAt + 1000, { type: 'system' }, 'assignment', `AI suggested ${m.name} as the assignee. Waiting for ${memberById.get(QA_ID)?.name ?? 'QA'} to confirm.`, 'internal');
+    push(d.createdAt + 1000, AI, 'assignment', `AI suggested ${m.name} as the developer. Waiting for ${memberById.get(pmOf(d))?.name ?? 'the PM'} to review.`, 'internal');
   }
-  // QA's first reply to the client: the initial response.
-  if (fr != null) push(fr, teamActor(QA_ID), 'response', responseText(d));
-  const sentRca = rcaAt(d);
-  if (fr != null && d.assigneeId && sentRca != null) {
+  // The AI's initial response goes out on its own, with no one to confirm it.
+  if (d.firstRespondedAt != null) push(d.firstRespondedAt, AI, 'response', responseText(d));
+  // The PM's review hands it to QA; QA's check hands it to the developer.
+  if (d.reviewedAt != null) push(d.reviewedAt, teamActor(pmOf(d)), 'status', 'Status changed from New to Not started');
+  const fr = qaAt(d);
+  if (fr != null) push(fr, teamActor(QA), 'status', 'Status changed from Not started to In progress', 'internal');
+  if (fr != null && d.assigneeId) {
     const m = memberById.get(d.assigneeId)!;
     const span = Math.max(end - fr, 4 * MIN);
-    // QA confirmed the AI's read and sent the initial RCA; confirming starts the work.
-    push(sentRca, teamActor(QA_ID), 'status', 'Status changed from New to In progress');
     // Blocked and testing are NXS's own steps, so they stay internal.
     const by = teamActor(m.id);
     if (d.status === 'blocked' && d.blocker) {
@@ -110,17 +137,24 @@ function buildActivity(d: Draft): Activity[] {
       push(d.blocker.at + 1000, by, 'blocker', `Blocker: ${d.blocker.details}`, 'internal');
     }
     const past = (s: TicketStatus[]) => s.includes(d.status);
-    if (past(['waiting_testing', 'on_testing', 'ready_to_deploy'])) {
+    if (past(['waiting_testing', 'on_testing', 'qa_passed', 'ready_to_deploy'])) {
       push(fr + span * 0.45, by, 'status', 'Status changed from In progress to Waiting for testing', 'internal');
       push(fr + span * 0.45 + 1000, by, 'progress', stepUpdate('in_progress', 'waiting_testing')!);
     }
-    if (past(['on_testing', 'ready_to_deploy'])) {
-      push(fr + span * 0.55, teamActor(QA_ID), 'status', 'Status changed from Waiting for testing to On testing', 'internal');
+    if (past(['on_testing', 'qa_passed', 'ready_to_deploy'])) {
+      push(fr + span * 0.55, teamActor(QA), 'status', 'Status changed from Waiting for testing to On testing', 'internal');
       push(fr + span * 0.55 + 1000, by, 'progress', stepUpdate('waiting_testing', 'on_testing')!);
     }
-    // Testing passed: QA sends it to the client to approve it going live.
-    if (d.status === 'ready_to_deploy') push(fr + span * 0.65, teamActor(QA_ID), 'status', 'Status changed from On testing to Ready to deploy');
-    if (d.status === 'ready_to_deploy' && d.handoff) push(d.handoff.at, teamActor(QA_ID), 'handoff', 'Sent the full RCA with the fix');
+    if (d.status === 'qa_passed') {
+      push(fr + span * 0.8, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
+      push(fr + span * 0.8 + 1000, by, 'progress', stepUpdate('on_testing', 'qa_passed')!);
+    }
+    // Testing passed: the developer sends the release to the client to approve the deploy.
+    if (d.status === 'ready_to_deploy') {
+      push(fr + span * 0.6, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
+      push(fr + span * 0.65, teamActor(d.assigneeId), 'status', 'Status changed from QA passed to Ready to deploy');
+    }
+    if (d.status === 'ready_to_deploy' && d.handoff) push(d.handoff.at, teamActor(d.assigneeId), 'handoff', 'Sent the release to the client to approve the deploy');
   }
   // The fix goes to the client first; once they approve it, it is resolved.
   // A reopened ticket was declined during client review.
@@ -131,9 +165,13 @@ function buildActivity(d: Draft): Activity[] {
     push(sentAt - gap + 1000, teamActor(d.assigneeId), 'progress', stepUpdate('in_progress', 'waiting_testing')!);
     push(sentAt - gap * 0.6, teamActor(d.assigneeId), 'status', 'Status changed from Waiting for testing to On testing', 'internal');
     push(sentAt - gap * 0.6 + 1000, teamActor(d.assigneeId), 'progress', stepUpdate('waiting_testing', 'on_testing')!);
-    push(sentAt, teamActor(QA_ID), 'status', 'Status changed from On testing to Ready to deploy');
-    // The client's Deploy is what resolves it.
-    if (d.reopenedAt == null) push(firstDone, reporter, 'resolution', `Deployed by ${reporterName(d)}. Status changed from Ready to deploy to Resolved`);
+    push(sentAt - gap * 0.3, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
+    push(sentAt, teamActor(d.assigneeId), 'status', 'Status changed from QA passed to Ready to deploy');
+    // The client approves the deploy; NXS puts it live, which resolves it.
+    if (d.reopenedAt == null) {
+      push(firstDone - Math.min(40 * MIN, (firstDone - sentAt) * 0.5), reporter, 'status', `${reporterName(d)} approved the deploy. NXS deploys it next.`);
+      push(firstDone, teamActor(d.assigneeId), 'resolution', 'Deployed. Status changed from Ready to deploy to Resolved');
+    }
   }
   if (d.reopenedAt != null) {
     push(d.reopenedAt, reporter, 'status', 'Declined the fix. Status changed from Ready to deploy to In progress');
@@ -161,14 +199,13 @@ function buildActivity(d: Draft): Activity[] {
   return acts.sort((a, b) => a.at - b.at);
 }
 
-/** What was found and the plan, written when work started. */
+/** What was found and the plan: the AI's draft, reviewed and sent by the developer. */
 function diagnosisOf(d: Draft) {
   const at = rcaAt(d);
-  if (at == null) return undefined;
+  if (at == null || !d.assigneeId) return undefined;
   const assetName = assetById.get(d.assetId)?.name ?? 'the asset';
   const { issue, fix } = draftDiagnosis(d, assetName);
-  // QA shares it when confirming the AI's read.
-  return { problem: problemOf(d, assetName), issue, fix, by: teamActor(QA_ID), at: at + 500 };
+  return { problem: problemOf(d, assetName), issue, fix, by: teamActor(d.assigneeId), at: at + 500 };
 }
 
 function buildFeedback(d: Draft): ClientFeedback[] {
@@ -196,8 +233,8 @@ function finalize(d: Draft, id: string): Ticket {
     status: d.status,
     severity: d.severity,
     assigneeId: d.assigneeId,
-    testerId: QA_ID,
-    // A ticket still in New has only the AI's read so far; QA hasn't confirmed it.
+    testerId: testerOf(d),
+    // A ticket still in New has only the AI's read so far; the PM hasn't reviewed it.
     triage: d.status === 'new' && d.assigneeId ? { assetId: d.assetId, category: d.category, severity: d.severity, assigneeId: d.assigneeId } : undefined,
     firstRespondedAt: d.firstRespondedAt,
     resolvedAt: d.resolvedAt,
@@ -206,26 +243,42 @@ function finalize(d: Draft, id: string): Ticket {
     feedback: buildFeedback(d),
     diagnosis: diagnosisOf(d),
     blockers: d.blocker && d.assigneeId
-      ? [{ id: nextId('blk-'), details: d.blocker.details, by: teamActor(d.assigneeId), at: d.blocker.at, clearedAt: null, clearedBy: null, clearNote: '' }]
+      ? [{ id: nextId('blk-'), details: d.blocker.details, by: teamActor(d.assigneeId), at: d.blocker.at, clearedAt: null, clearedBy: null, clearNote: '', from: 'in_progress' }]
       : [],
     moveNotes: [],
-    handoffs: d.handoff && d.assigneeId ? [{ id: nextId('hof-'), note: '', attachments: [fullRcaFile(id)], by: teamActor(QA_ID), at: d.handoff.at }] : verifiedFor(d, id),
+    handoffs: d.handoff && d.assigneeId ? [releaseOf(d, d.handoff.at, id)] : verifiedFor(d, id),
     attachments: d.attachments,
     comments: d.comments ?? [],
     activity,
   };
-  if (d.firstRespondedAt != null) ticket.initialResponse = { text: responseText(d), by: teamActor(QA_ID), at: d.firstRespondedAt };
+  if (d.status === 'qa_passed' && d.passed) {
+    const assetName = assetById.get(d.assetId)?.name ?? 'the asset';
+    const shot = `${d.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').slice(0, 3).join('-')}-on-staging.png`;
+    ticket.testResult = { at: d.passed.at, by: teamActor(testerOf(d)), note: d.passed.note || releaseNotesOf({ title: d.title, diagnosis: ticket.diagnosis }, assetName, ''), proof: [{ id: nextId('att-'), name: shot, size: '410 KB', kind: 'image' }] };
+  }
+  if (d.security) ticket.securityIssue = true;
+  if (d.recurring) ticket.recurring = true;
+  const lastRelease = ticket.handoffs[ticket.handoffs.length - 1];
+  ticket.comments = ticket.comments.map((c) => (c.on?.kind === 'release' && c.on.id === RELEASE ? { ...c, on: lastRelease ? { kind: 'release', id: lastRelease.id } : { kind: 'rca' } } : c));
+  if (d.firstRespondedAt != null) ticket.initialResponse = { text: responseText(d), by: AI, at: d.firstRespondedAt };
   return ticket;
 }
 
 /** A resolved ticket passed testing before the client deployed it: what was checked, with proof. */
 function verifiedFor(d: Draft, id: string): Ticket['handoffs'] {
   if (d.status !== 'resolved' || d.resolvedAt == null || !d.assigneeId) return [];
-  return [{ id: nextId('hof-'), note: '', attachments: [fullRcaFile(id)], by: teamActor(QA_ID), at: d.resolvedAt - Math.min(3 * HOUR, (d.resolvedAt - d.createdAt) * 0.25) }];
+  return [releaseOf(d, d.resolvedAt - Math.min(3 * HOUR, (d.resolvedAt - d.createdAt) * 0.25), id)];
 }
 
-/** The full RCA spreadsheet that goes to the client with the fix. */
-const fullRcaFile = (id: string): Attachment => ({ id: nextId('att-'), name: `RCA Report - ${id}.xlsx`, size: '72 KB', kind: 'doc' });
+/** What the developer sent the client with the fix: the image and release notes as proof. */
+function releaseOf(d: Draft, at: number, id: string): Ticket['handoffs'][number] {
+  const assetName = assetById.get(d.assetId)?.name ?? 'the asset';
+  const t = { title: d.title, diagnosis: diagnosisOf(d), clientId: d.clientId, plan: { taskType: taskTypeFor(d.title, d.description, d.category) } };
+  // QA's proof from staging: a screenshot of it working.
+  const shot = `${d.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').slice(0, 4).join('-')}-fixed-on-staging.png`;
+  const proof: Attachment[] = d.handoff?.files.length ? d.handoff.files : [{ id: nextId('att-'), name: shot, size: '380 KB', kind: 'image' }];
+  return { id: nextId('hof-'), note: d.handoff?.note || releaseNotesOf(t, assetName, ''), attachments: proof, imageTag: imageTagOf(`nxs-tech/${REPO[assetById.get(d.assetId)?.category ?? 'consumer_website']}`, id, at), by: teamActor(d.assigneeId ?? testerOf(d)), at };
+}
 
 /* ---------- Who reports ---------- */
 
@@ -263,12 +316,20 @@ interface Spec {
   files?: [string, string, Attachment['kind']][];
   /** Left past its deadline on purpose: one of the few overdue cases in the sample. */
   late?: boolean;
+  /** In progress, but the developer hasn't sent the initial RCA yet. */
+  rcaPending?: boolean;
+  /** Resolved security or data issue (a P2 then gets a full RCA). */
+  security?: boolean;
+  /** The issue came back after an earlier fix (a P3 then gets a full RCA). */
+  recurring?: boolean;
+  /** For tickets in QA passed: the release notes QA wrote. */
+  passedNote?: string;
   /** For tickets in Blocked: what is blocking it, and since how many hours ago. */
   blocker?: [details: string, agoH: number];
   /** For tickets ready to deploy: the note sent to the client, and its files. */
   handoff?: [note: string, files?: [string, string, Attachment['kind']][]];
   /** Comments: the thread, who wrote it ('reporter', 'assignee' or a team member id), how many hours ago, and the text. */
-  comments?: [thread: Comment['thread'], who: string, agoH: number, text: string][];
+  comments?: [thread: Comment['thread'], who: string, agoH: number, text: string, on?: 'rca' | 'release'][];
 }
 
 const ACTIVE: Spec[] = [
@@ -288,7 +349,7 @@ const ACTIVE: Spec[] = [
   {
     title: 'Flash sale stock counts out of sync with the warehouse feed',
     desc: 'Tonight\'s flash sale SKUs show 0 stock on the website although the warehouse feed reports 300+ units each. The sale starts at 20:00 and the affected SKUs are the headline products.',
-    asset: 'AST-CML-01', cat: 'tech', sev: 'medium', status: 'new', agoH: 0.8, via: 'manual', reporter: 1,
+    asset: 'AST-CML-01', cat: 'tech', sev: 'medium', status: 'not_started', agoH: 0.8, frM: 12, via: 'manual', reporter: 1,
     files: [['warehouse-feed-export.csv', '112 KB', 'doc']],
   },
   {
@@ -319,10 +380,48 @@ const ACTIVE: Spec[] = [
     files: [['hero-empty-mobile.png', '410 KB', 'image']],
   },
   {
+    title: 'Size guide link opens a blank pop-up on product pages',
+    desc: 'On every product page the "Size guide" link opens an empty white pop-up. It used to show the size chart. Customers are asking customer service for sizes instead.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'low', status: 'qa_passed', agoH: 26, frM: 40, reporter: 1,
+    files: [['size-guide-blank.png', '230 KB', 'image']],
+    passedNote: 'The size guide opens with the right chart again on every product page we tried, on desktop and on a phone. The pop-up also closes with the back button now.',
+  },
+  {
     title: 'Store locator map shows no pins outside Jakarta',
     desc: 'The store locator lists every outlet, but the map only shows pins for Jakarta. Outlets in Bandung, Surabaya and Medan have no pin, so shoppers there see an empty map.',
     asset: 'AST-CML-01', cat: 'tech', sev: 'low', status: 'waiting_testing', agoH: 17.5, frM: 50, reporter: 1,
     files: [['store-locator-empty-map.png', '520 KB', 'image']],
+  },
+  {
+    title: 'Checkout down for all card payments during the 11.11 sale',
+    desc: 'From 21:05 on 11 November every card payment failed with "Payment could not be processed". Bank transfer still worked. It was the busiest hour of the sale.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'critical', status: 'resolved', agoH: 176, frM: 20, resolvedAgoH: 170, reporter: 2,
+    files: [['card-payment-error.png', '260 KB', 'image']],
+  },
+  {
+    // Resolved just over five days ago, so its full RCA went out an hour ago: the top of the portal's Done tab.
+    title: 'Customers logged out and unable to sign back in on the website',
+    desc: 'Since 02:40 every customer is logged out, and the sign-in page says "Something went wrong" even with the right password. Guests can still place orders, but members cannot see their points or past orders.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'critical', status: 'resolved', agoH: 127, frM: 12, resolvedAgoH: 121, reporter: 2,
+    files: [['sign-in-error.png', '240 KB', 'image'], ['sign-in-loop.mp4', '2.1 MB', 'video']],
+  },
+  {
+    title: 'Product search returns nothing for any keyword',
+    desc: 'Since this morning the search bar returns "No products found" for every keyword, even product names. Shoppers can still browse by category.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'critical', status: 'resolved', agoH: 30, frM: 15, resolvedAgoH: 22, reporter: 2,
+    files: [['search-no-results.mp4', '3.2 MB', 'video']],
+  },
+  {
+    title: 'Customer emails visible in the shared campaign report link',
+    desc: 'The campaign report link we share with our agency shows a column of customer emails that was not there before. The agency should only see totals.',
+    asset: 'AST-CML-02', cat: 'tech', sev: 'medium', status: 'resolved', agoH: 50, frM: 30, resolvedAgoH: 40, reporter: 2, security: true,
+    files: [['shared-report-emails-column.png', '330 KB', 'image']],
+  },
+  {
+    title: 'Banner carousel stops on the second slide again',
+    desc: 'The homepage carousel stops on the second slide again, like in October. It was fixed then but is back since the new banners went up.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'low', status: 'resolved', agoH: 40, frM: 60, resolvedAgoH: 26, reporter: 2, recurring: true,
+    files: [['carousel-stuck.mp4', '2.6 MB', 'video']],
   },
   {
     title: 'Order confirmation emails delayed by up to 40 minutes',
@@ -366,21 +465,37 @@ const ACTIVE: Spec[] = [
     title: 'TikTok Ads spend shows zero in Spend by channel',
     desc: 'TikTok Ads has shown Rp 0 spend since 1 November in Spend by channel, although Ads Manager shows the campaigns running. Meta and Google are correct.',
     asset: 'AST-CML-02', cat: 'tech', sev: 'low', status: 'ready_to_deploy', agoH: 44, frM: 170, reporter: 2,
-    handoff: ['TikTok Ads spend comes through again and has been backfilled from 1 November. Open Spend by channel and compare TikTok Ads with your Ads Manager export.', [['spend-by-channel-tiktok.png', '280 KB', 'image']]],
+    files: [['spend-by-channel-zero.png', '310 KB', 'image'], ['tiktok-ads-manager-export.csv', '14 KB', 'doc']],
+    handoff: ['TikTok Ads spend comes through again and has been backfilled from 1 November. We checked it on staging against your Ads Manager export: every day from 1 to 19 November now matches.', [['spend-by-channel-tiktok-fixed.png', '280 KB', 'image'], ['tiktok-backfill-check.mp4', '3.4 MB', 'video']]],
+    comments: [
+      ['client', 'reporter', 9, 'Thanks. Does the backfill also cover the campaigns we paused on 5 November?', 'release'],
+      ['client', 'assignee', 8, 'Yes. Paused campaigns are included; their spend up to the pause date is back in the report.', 'release'],
+      ['client', 'reporter', 6, 'Great. Will the November total in the monthly report update on its own?', 'release'],
+      ['client', 'assignee', 5, 'It will. Once the fix is live the monthly report rebuilds overnight with the corrected numbers.', 'release'],
+      ['client', 'reporter', 20, 'The cause makes sense. Our token was renewed on 31 October, so the timing fits.', 'rca'],
+    ],
+  },
+  {
+    title: 'Voucher code field rejects codes typed in lowercase',
+    desc: 'Customers typing a voucher code in lowercase get "Invalid code", while the same code in capitals works. Customer service is getting calls about the 12.12 codes we sent by SMS in lowercase.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'medium', status: 'ready_to_deploy', agoH: 20, frM: 40, reporter: 1,
+    files: [['voucher-invalid-lowercase.png', '240 KB', 'image'], ['voucher-checkout-recording.mp4', '5.8 MB', 'video']],
+    handoff: ['Voucher codes are now accepted in any mix of capitals and lowercase, and spaces around the code are ignored. We tried the 12.12 codes from your SMS on staging, on desktop and on a phone, and each one applied its discount.', [['voucher-lowercase-accepted.png', '210 KB', 'image'], ['voucher-fixed-checkout.mp4', '4.1 MB', 'video']]],
+    comments: [['client', 'reporter', 3, 'Can you confirm codes with a space at the end also work? Some customers copy them from WhatsApp.', 'release']],
   },
 
   /* Aroma Abadi, Omnichannel Dashboard */
   {
     title: 'Marketplace orders stopped syncing after the connector upgrade',
     desc: 'Since the marketplace connector was upgraded this morning, no new Shopee or Tokopedia orders appear in the omnichannel dashboard. Store teams cannot pick and pack marketplace orders.',
-    asset: 'AST-ARA-01', cat: 'tech', sev: 'critical', status: 'in_progress', agoH: 1.4, frM: 6, via: 'manual', reporter: 2,
+    asset: 'AST-ARA-01', cat: 'tech', sev: 'critical', status: 'in_progress', agoH: 1.4, frM: 6, rcaPending: true, via: 'manual', reporter: 2,
     comments: [['internal', 'assignee', 1, 'Rolled the connector back on staging and orders sync again. Testing the same rollback on production next.']],
     files: [['connector-error-log.txt', '18 KB', 'log']],
   },
   {
     title: 'Shopee and Tokopedia stock differ from the warehouse count',
     desc: 'Stock shown for 40 best sellers on Shopee and Tokopedia is lower than the warehouse count in the dashboard. Several products show as sold out on the marketplaces while we have stock.',
-    asset: 'AST-ARA-01', cat: 'tech', sev: 'medium', status: 'new', agoH: 0.8, reporter: 3,
+    asset: 'AST-ARA-01', cat: 'tech', sev: 'medium', status: 'not_started', agoH: 0.8, frM: 15, reporter: 3,
     files: [['stock-mismatch.xlsx', '46 KB', 'doc']],
   },
   {
@@ -493,11 +608,16 @@ function fromSpec(spec: Spec): Draft {
     category: s.cat,
     severity: s.sev,
     status: s.status,
-    // Business to a business PIC; frontend to Alfiana, backend to Mega, as the AI routes it.
-    assigneeId: routeTo(s.cat, taskTypeFor(s.title, s.desc, s.cat), s.reporter),
+    // To the client's frontend or backend developer, as the AI routes it.
+    assigneeId: routeTo(client, taskTypeFor(s.title, s.desc, s.cat)),
     createdAt,
-    // A new ticket more than a quarter of an hour old has had its initial response; the late ones haven't.
-    firstRespondedAt: s.frM != null ? createdAt + s.frM * MIN : s.status === 'new' && !s.late && s.agoH * 60 >= 15 ? createdAt + 10 * MIN : null,
+    // The AI answers the moment it comes in; the PM's review is the first human step.
+    firstRespondedAt: createdAt + MIN,
+    reviewedAt: s.frM != null && s.status !== 'new' ? createdAt + s.frM * MIN : null,
+    rcaPending: s.rcaPending,
+    security: s.security,
+    recurring: s.recurring,
+    passed: s.status === 'qa_passed' ? { note: s.passedNote ?? '', at: NOW - Math.min(s.agoH * 0.1, 0.6) * HOUR } : undefined,
     resolvedAt: reopened ? null : resolvedOnce,
     firstResolvedAt: reopened ? resolvedOnce ?? undefined : undefined,
     reopenedAt: reopened ? NOW - s.reopenedAgoH! * HOUR : undefined,
@@ -507,12 +627,14 @@ function fromSpec(spec: Spec): Draft {
     reporterId: reporterFor(client.id, s.cat, s.reporter),
     channel: s.via ?? 'portal',
     attachments: (s.files ?? []).map(([name, size, kind]) => ({ id: nextId('att-'), name, size, kind })),
-    triageBy: LOGGER_IDS[spec.agoH % 2 < 1 ? 0 : 1],
+    triageBy: pmFor(client),
     blocker: s.blocker ? { details: s.blocker[0], at: NOW - s.blocker[1] * HOUR } : undefined,
-    comments: (s.comments ?? []).map(([thread, who, agoH, text], i) => ({
+    comments: (s.comments ?? []).map(([thread, who, agoH, text, on], i) => ({
       id: nextId('cmt-'),
       thread,
-      by: who === 'reporter' ? clientActor(reporterFor(client.id, s.cat, s.reporter)) : teamActor(who === 'assignee' ? routeTo(s.cat, taskTypeFor(s.title, s.desc, s.cat), s.reporter) : who),
+      // A client-thread comment is a reply on the client's timeline: under the initial RCA, or under the fix.
+      ...(thread === 'client' ? { on: on === 'release' ? ({ kind: 'release', id: RELEASE } as const) : ({ kind: 'rca' } as const) } : {}),
+      by: who === 'reporter' ? clientActor(reporterFor(client.id, s.cat, s.reporter)) : teamActor(who === 'assignee' ? routeTo(client, taskTypeFor(s.title, s.desc, s.cat)) : who),
       // Never before the ticket came in, and in the order written.
       at: Math.max(createdAt + (10 + i) * MIN, NOW - agoH * HOUR),
       text,
@@ -642,13 +764,14 @@ function generateHistory(): Draft[] {
       if (createdAt > NOW - 2 * HOUR || resolvedAt > NOW - 20 * MIN) continue;
 
       const frFactor = r[6] < 0.07 ? 1.1 + r[7] * 0.8 : 0.15 + r[7] * 0.7;
-      const firstRespondedAt = Math.min(createdAt + target.firstResponseMins * MIN * frFactor, createdAt + (resolvedAt - createdAt) * 0.3);
+      // The PM's review: inside the hour, so QA and the developer have time before the RCA is due.
+      const reviewedAt = Math.min(createdAt + target.firstResponseMins * MIN * frFactor, createdAt + (resolvedAt - createdAt) * 0.3);
       // A few requests never get done: withdrawn, duplicates, out of scope.
       const canceled = r[8] < 0.04;
       const canceledAt = createdAt + (resolvedAt - createdAt) * 0.4;
 
-      // Routed the way the AI routes a new ticket: business to a business PIC, the rest by kind of work.
-      const assignee = team.find((m) => m.id === routeTo(category, taskTypeFor(title, '', category), Math.floor(r[10] * 10)))!;
+      // Routed the way the AI routes a new ticket: to the client's developer for the kind of work.
+      const assignee = team.find((m) => m.id === routeTo(client, taskTypeFor(title, '', category)))!;
       const reporterId = reporterFor(client.id, category, Math.floor(r[11] * 1000));
       const reporter = client.users.find((u) => u.id === reporterId)!;
 
@@ -660,16 +783,17 @@ function generateHistory(): Draft[] {
         category,
         severity,
         status: canceled ? 'canceled' : 'resolved',
-        assigneeId: asset.ownerId ?? assignee.id,
+        assigneeId: assignee.id,
         createdAt,
-        firstRespondedAt,
+        firstRespondedAt: createdAt + MIN,
+        reviewedAt,
         resolvedAt: canceled ? null : resolvedAt,
         canceledAt: canceled ? canceledAt : null,
-        cancellation: canceled ? { by: teamActor('tm-riyan'), reason: CANCEL_REASONS[Math.floor(r[9] * CANCEL_REASONS.length)], at: canceledAt } : null,
+        cancellation: canceled ? { by: teamActor(testerFor(client)), reason: CANCEL_REASONS[Math.floor(r[9] * CANCEL_REASONS.length)], at: canceledAt } : null,
         reporterId: reporter.id,
         channel: weighted(() => (r[3] * 1013) % 1, CHANNEL_WEIGHTS),
         attachments: [],
-        triageBy: LOGGER_IDS[r[0] < 0.5 ? 0 : 1],
+        triageBy: pmFor(client),
       });
     }
   }

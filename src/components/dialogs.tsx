@@ -46,26 +46,29 @@ const CANCEL_PRESETS = ['Client withdrew the request', 'Duplicate of another tic
 function CancelTicketDialog({ ticketId }: { ticketId: string }) {
   const { ticketOf, changeStatus, setDialog } = useStore();
   const ticket = ticketOf(ticketId);
-  const [preset, setPreset] = useState(CANCEL_PRESETS[0]);
+  // QA's check found nothing: it closes with proof of what they saw.
+  const checked = ticket?.status === 'not_started';
+  const [preset, setPreset] = useState(checked ? 'Could not be reproduced' : CANCEL_PRESETS[0]);
   const [details, setDetails] = useState('');
+  const [proof, setProof] = useState<Attachment[]>([]);
   const [submitted, setSubmitted] = useState(false);
   if (!ticket) return null;
-  const needsDetails = preset === 'Other';
-  const error = needsDetails && details.trim().length < 5 ? 'Explain why this ticket is canceled.' : '';
+  const needsDetails = preset === 'Other' || checked;
+  const error = needsDetails && details.trim().length < 5 ? (checked ? 'Say what you checked.' : 'Explain why this ticket is canceled.') : checked && proof.length === 0 ? 'Add a screenshot or recording as proof.' : '';
   const close = () => setDialog(null);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
     if (error) return;
-    const reason = needsDetails ? details.trim() : details.trim() ? `${preset}. ${details.trim()}` : `${preset}.`;
-    if (changeStatus(ticket.id, 'canceled', { reason })) close();
+    const reason = preset === 'Other' ? details.trim() : details.trim() ? `${preset}. ${details.trim()}` : `${preset}.`;
+    if (changeStatus(ticket.id, 'canceled', { reason, proof })) close();
   };
 
   return (
     <Modal
-      title="Cancel this ticket?"
-      description="The work stops here. The client sees it as canceled, and the reason goes into the activity history."
+      title={checked ? 'Not an issue?' : 'Cancel this ticket?'}
+      description={checked ? 'The ticket closes as canceled. The client sees the reason and your proof.' : 'The work stops here. The client sees it as canceled, and the reason goes into the activity history.'}
       onClose={close}
       footer={
         <>
@@ -83,9 +86,15 @@ function CancelTicketDialog({ ticketId }: { ticketId: string }) {
         <Field label="Reason" htmlFor="cl-reason">
           <Select id="cl-reason" value={preset} onChange={setPreset} options={CANCEL_PRESETS.map((p) => ({ value: p, label: p }))} />
         </Field>
-        <Field label="Details" optional={!needsDetails} htmlFor="cl-details" error={submitted ? error : ''}>
-          <TextArea id="cl-details" rows={3} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Confirmed by phone with their marketing lead on 14 Nov." data-autofocus />
-        </Field>
+        {checked ? (
+          <Field label="What you checked" htmlFor="cl-details" hint="Attach a screenshot or recording of it working." error={submitted ? error : ''}>
+            <RichInput id="cl-details" value={details} onChange={setDetails} files={proof} onFilesChange={setProof} invalid={submitted && !!error} placeholder="Followed the steps on desktop and on a phone; bank transfer shows the virtual account number." autoFocus />
+          </Field>
+        ) : (
+          <Field label="Details" optional={!needsDetails} htmlFor="cl-details" error={submitted ? error : ''}>
+            <TextArea id="cl-details" rows={3} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Confirmed by phone with their marketing lead on 14 Nov." data-autofocus />
+          </Field>
+        )}
       </form>
     </Modal>
   );

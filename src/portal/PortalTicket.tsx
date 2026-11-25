@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowUp, Ban, Boxes, CalendarCheck, CalendarDays, CircleCheck, CircleUser, Layers, MessageSquare, Signal, X } from 'lucide-react';
-import type { Activity, Ticket, TicketStatus } from '../types';
+import { ArrowLeft, ArrowUp, Ban, Rocket, Boxes, CalendarCheck, CalendarDays, CircleCheck, CircleUser, Layers, Signal, X } from 'lucide-react';
+import type { Ticket, TicketStatus } from '../types';
 import { PORTAL_STATUS_LABEL, TASK_TYPE_LABEL, portalStatus } from '../lib/domain';
 import { fmtDate, fmtDateTime, fmtDuration, fmtRelative, fmtTime, fmtWeekday } from '../lib/format';
 import { useStore } from '../store';
 import { Prop } from '../components/detail';
 import { STATUS_ICON, STATUS_TONE, SeverityBadge } from '../components/domain';
-import { CommentBox, withMentions } from '../components/comments';
 import { Avatar, Badge, Button, Card, Empty, cx } from '../components/ui';
 import { usePortalUser } from './shared';
 import { CLIENT_STARTERS, clientAnswer } from './assistant';
@@ -28,7 +27,8 @@ const TASK_TONE = { frontend: 'blue', backend: 'green' } as const;
 /** When the ticket first reached each step the client sees. */
 function reachedAt(t: Ticket, step: TicketStatus): number | undefined {
   if (step === 'new') return t.createdAt;
-  if (step === 'in_progress') return t.firstRespondedAt ?? undefined;
+  // In progress from the moment NXS took it on, not from the AI's first reply.
+  if (step === 'in_progress') return t.activity.find((a) => a.kind === 'status' && a.text.startsWith('Status changed from New to'))?.at ?? t.diagnosis?.at;
   if (step === 'ready_to_deploy') return t.handoffs[t.handoffs.length - 1]?.at;
   if (step === 'resolved') return t.resolvedAt ?? undefined;
   return undefined;
@@ -47,7 +47,9 @@ function Stages({ ticket }: { ticket: Ticket }) {
         const state = i < at || (done && i === at) ? 'done' : i === at ? 'current' : 'todo';
         const reached = reachedAt(ticket, step);
         const Icon = state === 'done' ? CircleCheck : STATUS_ICON[step];
-        const when = state === 'todo' ? 'Not yet' : state === 'current' ? (step === 'ready_to_deploy' ? 'Waiting for you' : reached ? `For ${fmtDuration(now - reached)}` : 'Now') : reached ? fmtDateTime(reached) : '—';
+        const last = ticket.feedback[ticket.feedback.length - 1];
+        const approved = step === 'ready_to_deploy' && last?.decision === 'approved' && last.at >= (reached ?? 0);
+        const when = state === 'todo' ? 'Not yet' : state === 'current' ? (step === 'ready_to_deploy' ? (approved ? 'Approved, NXS is deploying' : 'Waiting for you') : reached ? `For ${fmtDuration(now - reached)}` : 'Now') : reached ? fmtDateTime(reached) : '—';
         return (
           <li key={step} className={cx('tdl-stage', `is-${state}`, state === 'current' && `tone-${STATUS_TONE[step]}`)} aria-current={state === 'current' ? 'step' : undefined}>
             <span className="tdl-stage-name">
@@ -83,70 +85,6 @@ function early(at: number, due: number) {
   return days >= 1 ? `${days} ${days === 1 ? 'day' : 'days'} early` : 'on time';
 }
 
-
-/* ---------- Updates and comments ---------- */
-
-function whoFor(actor: Activity['actor'], userId: string, names: Map<string, string>) {
-  if (actor.type === 'team' || actor.type === 'system') return 'NXS';
-  return actor.id === userId ? 'You' : (names.get(actor.id) ?? 'Your team');
-}
-
-function Comments({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const { addComment, clients, clientOf, now } = useStore();
-  const names = useMemo(() => new Map(clients.flatMap((c) => c.users).map((u) => [u.id, u.name])), [clients]);
-  const [text, setText] = useState('');
-  const list = ticket.comments.filter((c) => c.thread === 'client');
-  // Only the client's own people can be mentioned here.
-  const people = (clientOf(ticket.clientId)?.users ?? []).filter((u) => u.id !== userId).map((u) => ({ id: u.id, name: u.name, title: u.title }));
-  const send = () => {
-    if (!text.trim()) return;
-    addComment(ticket.id, 'client', text, { type: 'client', id: userId });
-    setText('');
-  };
-  return (
-    <div className="comments">
-      {list.length > 0 ? (
-        <ol className="comment-list">
-          {list.map((c) => {
-            const name = whoFor(c.by, userId, names);
-            return (
-              <li key={c.id} className="comment">
-                <Avatar name={name} size={28} />
-                <div className="comment-body">
-                  <p className="comment-meta">
-                    <span className="comment-name">{name}</span>
-                    <time title={fmtDateTime(c.at)}>{fmtRelative(c.at, now)}</time>
-                  </p>
-                  <p className="comment-text">{withMentions(c.text, people.map((p) => p.name))}</p>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <p className="comments-empty">No comments yet.</p>
-      )}
-      <CommentBox value={text} onChange={setText} onSend={send} people={people} label="Comment to NXS" placeholder="Write to NXS or your team… Type @ to mention someone." />
-    </div>
-  );
-}
-
-/** The conversation with NXS, under the timeline. */
-function CommentsSection({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const count = ticket.comments.filter((c) => c.thread === 'client').length;
-  return (
-    <section className="main-block pt-section" id="pt-comments" aria-labelledby="pt-comments-title">
-      <header className="rca-head">
-        <div>
-          <h2 id="pt-comments-title" className="rca-title">
-            Comments <span className="doc-tab-count">{count}</span>
-          </h2>
-        </div>
-      </header>
-      <Comments ticket={ticket} userId={userId} />
-    </section>
-  );
-}
 
 /* ---------- Details ---------- */
 
@@ -210,18 +148,6 @@ function PortalAside({ ticket, userId, onAsk }: { ticket: Ticket; userId: string
           </>
         )}
       </dl>
-      {stage !== 'canceled' && (
-        <section className="pt-ask" aria-labelledby="pt-ask-head">
-          <p className="pt-ask-head" id="pt-ask-head">
-            Questions about this ticket?
-          </p>
-          <p className="pt-ask-text">{stage === 'new' ? 'Our assistant has read your report and answers right away.' : 'Our assistant has read the RCA and every update, and answers right away.'}</p>
-          <Button variant="primary" size="sm" onClick={onAsk}>
-            <MessageSquare size={15} aria-hidden />
-            Ask AI
-          </Button>
-        </section>
-      )}
     </aside>
   );
 }
@@ -348,12 +274,11 @@ export function PortalTicket() {
   }
   const stage = portalStatus(ticket.status);
   const StatusIcon = STATUS_ICON[stage];
+  const sent = ticket.handoffs[ticket.handoffs.length - 1];
+  const lastFeedback = ticket.feedback[ticket.feedback.length - 1];
+  const awaitingApproval = ticket.status === 'ready_to_deploy' && !(lastFeedback?.decision === 'approved' && sent && lastFeedback.at >= sent.at);
   const deploy = () => {
-    if (reviewFix(ticket.id, user.id, 'approved', '')) toast(`${ticket.id} deployed. Thanks!`);
-  };
-  const toComments = () => {
-    document.getElementById('pt-comments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelector<HTMLTextAreaElement>('#pt-comments textarea')?.focus({ preventScroll: true });
+    if (reviewFix(ticket.id, user.id, 'approved', '')) toast(`Approved. NXS deploys ${ticket.id} next.`);
   };
 
   return (
@@ -367,6 +292,15 @@ export function PortalTicket() {
             <span className="ticket-id">{ticket.id}</span>
             <h1 className="tdl-title">{ticket.title}</h1>
           </div>
+          {/* The client's one action, beside the title: approving the fix that's waiting on them. */}
+          {awaitingApproval && (
+            <div className="tdl-actions">
+              <Button variant="primary" onClick={deploy}>
+                <Rocket size={15} aria-hidden />
+                Approve deploy
+              </Button>
+            </div>
+          )}
           {/* The stage cards below say where it stands; only a canceled ticket, which has none, shows it here. */}
           {stage === 'canceled' && (
             <div className="tdl-actions">
@@ -392,8 +326,7 @@ export function PortalTicket() {
 
         <div className="ticket-body">
           <div className="ticket-main">
-            <Timeline ticket={ticket} userId={user.id} onDeploy={deploy} onComment={toComments} />
-            <CommentsSection ticket={ticket} userId={user.id} />
+            <Timeline ticket={ticket} userId={user.id} />
           </div>
           <PortalAside ticket={ticket} userId={user.id} onAsk={() => setAsking(true)} />
         </div>

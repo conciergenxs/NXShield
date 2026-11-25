@@ -1,13 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Activity, Actor, AppNotification, Asset, AssetStatus, Attachment, Availability, Category, Client, ClientUser, DeliveryRecord, Department, FullRcaContent, NotificationEventType, NotificationRule, Permission, Severity, SlaPolicy, SlaTarget, TeamMember, Ticket, TicketChannel, TicketStatus, AssetCategory, AssetMonitor, SlaExclusionKind, TicketPlan } from './types';
+import type { Activity, Actor, AppNotification, CodeFix, CommentOn, Asset, AssetStatus, Attachment, Availability, Category, Client, ClientUser, DeliveryRecord, Department, FullRcaContent, NotificationEventType, NotificationRule, Permission, Severity, SlaPolicy, SlaTarget, TeamMember, Ticket, TicketChannel, TicketStatus, AssetCategory, AssetMonitor, SlaExclusionKind, TicketPlan } from './types';
 import * as seed from './data/seed';
 import { useAuth } from './auth';
 import { buildInitialTickets } from './data/tickets';
-import { CATEGORY_LABEL, NEEDS_ASSIGNEE, SEVERITY_LABEL, priorityLabel, STATUS_LABEL, canTransition, hasPermission, isOpen, moveLabel, needsMoveNote, portalStatus, SLA_EXCLUSION_LABEL, TASK_TYPE_LABEL } from './lib/domain';
+import { CATEGORY_LABEL, NEEDS_ASSIGNEE, SEVERITY_LABEL, priorityLabel, STATUS_LABEL, canTransition, moveBlockedBy, hasPermission, isOpen, moveLabel, needsMoveNote, portalStatus, SLA_EXCLUSION_LABEL, TASK_TYPE_LABEL } from './lib/domain';
 import { fmtDuration } from './lib/format';
 import { autoPlan, taskTypeFor } from './lib/plan';
 import { analyze, fullRcaDraftOf, problemOf, responseDraftOf } from './lib/rcaAi';
-import { routeTo, guessAsset, guessCategory, guessSeverity, testerFor } from './lib/intake';
+import { codeFixFor } from './lib/codeFix';
+import { routeTo, guessAsset, guessCategory, guessSeverity, pmFor, testerFor } from './lib/intake';
 import { PROGRESS_EVERY_MINS, PROGRESS_STAGES, progressUpdate, stepUpdate } from './lib/assist';
 
 const MIN_MS = 60_000;
@@ -120,7 +121,7 @@ interface Store {
    *  linear path needs a `reason` (rework, reopen, blocker, resolve without
    *  approval, cancel); without one the matching dialog opens. Sending for
    *  approval needs a `handoff`: a note to the client, with optional files. */
-  changeStatus: (id: string, to: TicketStatus, opts?: { reason?: string; handoff?: { note: string; attachments: Attachment[] } }) => boolean;
+  changeStatus: (id: string, to: TicketStatus, opts?: { reason?: string; proof?: Attachment[]; handoff?: { note: string; attachments: Attachment[]; imageTag?: string } }) => boolean;
   /** Save the initial RCA (the likely cause and the plan; for P1 also when it will be fixed). The client sees it. */
   saveInitialRca: (id: string, rca: { problem?: string; issue: string; fix: string; fixBy?: number }) => void;
   /** Keep the team's edits to the AI's initial RCA draft, before it is shared. */
@@ -133,11 +134,21 @@ interface Store {
   sendInitialResponse: (id: string) => void;
   /** Keep the team's edit of the full RCA (by hand or by asking the AI). Null goes back to the AI's draft. */
   saveFullRcaDraft: (id: string, content: FullRcaContent | null) => void;
+  /** The AI's code fix as it stands: the developer's revisions if any, else its first draft. */
+  codeFixOf: (t: Ticket) => CodeFix;
+  /** Keep the AI's revision of the code fix. */
+  saveCodeFix: (id: string, fix: CodeFix) => void;
+  /** The developer approves the fix: it goes on staging and the ticket waits for testing. */
+  approveFix: (id: string) => void;
+  /** QA passed the fix on staging, with what they checked and any proof. */
+  passTest: (id: string, note: string, proof: Attachment[]) => void;
+  /** Mark (or unmark) a ticket as a security or data issue, which a full RCA covers. */
+  setSecurityIssue: (id: string, on: boolean) => void;
   /** The AI's drafts, as they read now: the initial response, and what the full RCA document covers. */
   responseDraftFor: (t: Ticket) => string;
   fullRcaDraftFor: (t: Ticket) => FullRcaContent;
   /** Post a comment. NXS staff post as themselves; `by` is set for a client user posting from the portal. */
-  addComment: (id: string, thread: 'client' | 'internal', text: string, by?: Actor) => void;
+  addComment: (id: string, thread: 'client' | 'internal', text: string, by?: Actor, on?: CommentOn) => void;
   /** When the signed-in client last opened their notifications, per client. */
   portalSeenAt: Record<string, number>;
   markPortalSeen: (clientId: string) => void;
@@ -147,8 +158,10 @@ interface Store {
   setTester: (id: string, memberId: string) => void;
   setCategory: (id: string, category: Category) => void;
   setAsset: (id: string, assetId: string) => void;
-  /** QA confirms the AI's read of a new ticket: the initial RCA goes to the client, and the work goes to the assignee. */
+  /** The PM confirms the properties the AI set on a new ticket: it moves to Not started, for QA to check. */
   confirmTriage: (id: string) => void;
+  /** The developer sends the initial RCA (the AI's draft, with their edits) to the client. */
+  sendInitialRca: (id: string) => void;
   setSeverity: (id: string, severity: Severity) => void;
   /** Mark a ticket outside the SLA for one of its exclusions, or count it again with null. */
   setSlaExclusion: (id: string, exclusion: { kind: SlaExclusionKind; note: string } | null) => void;
@@ -402,6 +415,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         toast(`${t.id} can't move from ${STATUS_LABEL[t.status]} to ${STATUS_LABEL[to]}.`, { tone: 'error' });
         return false;
       }
+      const missing = moveBlockedBy(t, to);
+      if (missing) {
+        toast(`${t.id} can't move to ${STATUS_LABEL[to]} yet. ${missing}`, { tone: 'error' });
+        return false;
+      }
       if (NEEDS_ASSIGNEE.includes(to) && !t.assigneeId) {
         setDialog({ type: 'assign', ticketId: id, then: to });
         return false;
@@ -413,12 +431,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       // Resolving is the client's call: they approve the fix in the Client Portal.
       // From here it only happens by skipping that, so it needs a confirmed reason.
-      if (to === 'resolved' && !opts?.reason?.trim()) {
+      const clientApproved = t.status === 'ready_to_deploy' && t.feedback[t.feedback.length - 1]?.decision === 'approved' && (t.feedback[t.feedback.length - 1].at >= (t.handoffs[t.handoffs.length - 1]?.at ?? 0));
+      if (to === 'resolved' && !clientApproved && !opts?.reason?.trim()) {
         setDialog({ type: 'resolve', ticketId: id });
         return false;
       }
       // Testing passed: the client gets a note, from the RCA and the test, to approve it going live.
-      if (to === 'ready_to_deploy' && !opts?.handoff?.attachments.length) {
+      if (to === 'ready_to_deploy' && !opts?.handoff) {
         setDialog({ type: 'request-approval', ticketId: id });
         return false;
       }
@@ -439,9 +458,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       const at = seed.clock();
       const next: Ticket = { ...t, status: to, updatedAt: at };
-      // Out of New, from anywhere (the button, the menu, the board): QA confirms the AI's read,
-      // and the initial RCA as QA left it goes to the client.
-      const confirming = t.status === 'new' && to === 'in_progress';
+      // Out of New, from anywhere (the button, the menu, the board): the PM confirms the AI's properties.
+      const confirming = t.status === 'new' && to !== 'canceled';
       const moved = `Status changed from ${STATUS_LABEL[t.status]} to ${STATUS_LABEL[to]}`;
       // Blocked and testing are NXS's own steps inside "In progress": moving
       // between them stays internal, so the client never sees or hears of it.
@@ -452,31 +470,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (t.status === 'blocked') {
         const open = t.blockers[t.blockers.length - 1];
         if (open && open.clearedAt == null) {
-          next.blockers = [...t.blockers.slice(0, -1), { ...open, clearedAt: at, clearedBy: me, clearNote: '' }];
-          extra.push(activity(at + 1, me, 'blocker', `Blocker cleared after ${fmtDuration(at - open.at)}`, 'internal'));
+          const how = opts?.reason?.trim() ?? '';
+          next.blockers = [...t.blockers.slice(0, -1), { ...open, clearedAt: at, clearedBy: me, clearNote: how }];
+          extra.push(activity(at + 1, me, 'blocker', `Blocker cleared after ${fmtDuration(at - open.at)}${how ? `: ${how}` : ''}`, 'internal'));
         }
       }
+      if (to === 'in_progress' && t.testResult) next.testResult = undefined;
       if (to === 'blocked') {
-        next.blockers = [...next.blockers, { id: `blk-${at}`, details: opts!.reason!.trim(), by: me, at, clearedAt: null, clearedBy: null, clearNote: '' }];
+        next.blockers = [...next.blockers, { id: `blk-${at}`, details: opts!.reason!.trim(), by: me, at, clearedAt: null, clearedBy: null, clearNote: '', from: t.status }];
         extra.push(activity(at + 1, me, 'blocker', `Blocker: ${opts!.reason!.trim()}`, 'internal'));
       }
       if (to === 'ready_to_deploy') {
-        const { note, attachments } = opts!.handoff!;
-        next.handoffs = [...t.handoffs, { id: `hof-${at}`, note: note.trim(), attachments, by: me, at }];
-        extra.push(activity(at + 1, me, 'handoff', note.trim() || 'Sent the fix to the client to deploy'));
+        const { note, attachments, imageTag } = opts!.handoff!;
+        next.handoffs = [...t.handoffs, { id: `hof-${at}`, note: note.trim(), attachments, imageTag, by: me, at }];
+        extra.push(activity(at + 1, me, 'handoff', imageTag ? `Sent ${imageTag} to the client to approve the deploy` : 'Sent the fix to the client to deploy'));
       }
       if (confirming) {
-        const asset = live.current.assets.find((a) => a.id === t.assetId);
         const dev = live.current.team.find((m) => m.id === t.assigneeId);
-        const draft = t.diagnosis ?? t.rcaDraft ?? analyze(t, asset?.name ?? 'the asset', live.current.tickets);
-        // The fix time follows the SLA for the priority, so nothing extra is set here.
-        const problem = t.rcaDraft?.problem ?? problemOf(t, asset?.name ?? 'the asset');
-        // P1's fix time is set in its initial RCA; P2 and P3 follow the SLA.
-        const fixBy = t.severity === 'critical' && t.rcaDraft?.hours ? t.createdAt + t.rcaDraft.hours * seed.HOUR : undefined;
-        if (!t.diagnosis) next.diagnosis = { problem, issue: draft.issue, fix: draft.fix, fixBy, by: me, at };
         if (t.triage) next.triage = { ...t.triage, confirmedAt: at, confirmedBy: me };
-        extra.push(activity(at + 1, me, 'assignment', `Confirmed the AI's suggestions and assigned it to ${dev?.name ?? 'the team'}`, 'internal'));
-        if (!t.diagnosis) extra.push(activity(at + 2, me, 'diagnosis', `The issue: ${problem} What we found: ${draft.issue} How we’ll fix it: ${draft.fix}`));
+        extra.push(activity(at + 1, me, 'assignment', `Reviewed the AI's properties: ${dev?.name ?? 'the team'} develops it`, 'internal'));
       }
       // The reason for rework or a reopen stays with NXS, even when the move itself is visible.
       if (needsMoveNote(t.status, to)) {
@@ -486,11 +498,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       if (to === 'resolved') {
         next.resolvedAt = at;
-        entry = activity(at, me, 'resolution', `Marked as resolved from ${STATUS_LABEL[t.status]}, without client approval. Reason: ${opts!.reason!.trim()}`);
+        entry = clientApproved
+          ? activity(at, me, 'resolution', 'Deployed. Status changed from Ready to deploy to Resolved')
+          : activity(at, me, 'resolution', `Marked as resolved from ${STATUS_LABEL[t.status]}, without client approval. Reason: ${opts!.reason!.trim()}`);
       } else if (to === 'canceled') {
         const reason = opts!.reason!.trim();
         next.canceledAt = at;
-        next.cancellation = { by: me, reason, at };
+        next.cancellation = { by: me, reason, at, ...(opts?.proof?.length ? { proof: opts.proof } : {}) };
         entry = activity(at, me, 'cancellation', `Canceled. Reason: ${reason}`);
       } else {
         if (to === 'in_progress' && (t.status === 'resolved' || t.status === 'canceled')) {
@@ -513,6 +527,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return true;
     },
     [can, commit, emit, me, toast],
+  );
+
+  const codeFixOf = useCallback<Store['codeFixOf']>((t) => {
+    if (t.codeFix) return t.codeFix;
+    const asset = live.current.assets.find((a) => a.id === t.assetId);
+    return codeFixFor(t, asset?.category, t.diagnosis?.fix ?? t.title);
+  }, []);
+
+  const approveFix = useCallback<Store['approveFix']>(
+    (id) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      const fix = { ...codeFixOf(t), stagedAt: at, stagedBy: me };
+      commit({ ...t, codeFix: fix, activity: [...t.activity, activity(at, me, 'progress', `Approved the AI’s fix and put it on staging: ${fix.branch}`, 'internal')] });
+      changeStatus(id, 'waiting_testing');
+    },
+    [changeStatus, codeFixOf, commit, me],
+  );
+
+  const passTest = useCallback<Store['passTest']>(
+    (id, note, proof) => {
+      const t = current(id);
+      if (!t) return;
+      const at = seed.clock();
+      commit({ ...t, testResult: { at, by: me, note: note.trim(), proof }, updatedAt: at, activity: [...t.activity, activity(at, me, 'progress', `Testing passed on staging${note.trim() ? `: ${note.trim()}` : ''}`, 'internal')] });
+      changeStatus(id, 'qa_passed');
+    },
+    [changeStatus, commit, me],
+  );
+
+  const setSecurityIssue = useCallback<Store['setSecurityIssue']>(
+    (id, on) => {
+      const t = current(id);
+      if (t) commit({ ...t, securityIssue: on });
+    },
+    [commit],
   );
 
   const assignTicket = useCallback<Store['assignTicket']>(
@@ -601,7 +652,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [commit, me],
   );
 
-  const confirmTriage = useCallback<Store['confirmTriage']>((id) => void changeStatus(id, 'in_progress'), [changeStatus]);
+  const confirmTriage = useCallback<Store['confirmTriage']>((id) => void changeStatus(id, 'not_started'), [changeStatus]);
+
+  const sendInitialRca = useCallback<Store['sendInitialRca']>(
+    (id) => {
+      const t = current(id);
+      if (!t || t.diagnosis) return;
+      const at = seed.clock();
+      const asset = live.current.assets.find((a) => a.id === t.assetId);
+      const draft = t.rcaDraft ?? analyze(t, asset?.name ?? 'the asset', live.current.tickets);
+      const problem = t.rcaDraft?.problem ?? problemOf(t, asset?.name ?? 'the asset');
+      // P1's fix time is set in its initial RCA; P2 and P3 follow the SLA.
+      const fixBy = t.severity === 'critical' && t.rcaDraft?.hours ? t.createdAt + t.rcaDraft.hours * seed.HOUR : undefined;
+      const next: Ticket = {
+        ...t,
+        diagnosis: { problem, issue: draft.issue, fix: draft.fix, fixBy, by: me, at },
+        updatedAt: at,
+        activity: [...t.activity, activity(at, me, 'diagnosis', `The issue: ${problem} What we found: ${draft.issue} How we’ll fix it: ${draft.fix}`)],
+      };
+      commit(next);
+      emit('progress_update', next, 'Initial RCA sent');
+      toast(`Initial RCA sent on ${t.id}`);
+    },
+    [commit, emit, me, toast],
+  );
 
   const setSlaExclusion = useCallback<Store['setSlaExclusion']>(
     (id, exclusion) => {
@@ -660,6 +734,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [commit, me],
   );
 
+  const saveCodeFix = useCallback<Store['saveCodeFix']>(
+    (id, fix) => {
+      const t = current(id);
+      if (t) commit({ ...t, codeFix: fix });
+    },
+    [commit],
+  );
+
   const saveFullRcaDraft = useCallback<Store['saveFullRcaDraft']>(
     (id, content) => {
       const t = current(id);
@@ -697,7 +779,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const addComment = useCallback<Store['addComment']>(
-    (id, thread, text, by) => {
+    (id, thread, text, by, on) => {
       const t = current(id);
       if (!t || !text.trim()) return;
       const at = seed.clock();
@@ -709,7 +791,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const authorName = author.type === 'team' ? team.find((m) => m.id === authorId)?.name ?? 'Someone' : clients.flatMap((c) => c.users).find((u) => u.id === authorId)?.name ?? 'The client';
       // Every comment is part of the ticket's history; an internal one stays internal.
       const logged = activity(at, author, 'comment', `${thread === 'internal' ? 'Internal note' : 'Comment'}: “${excerpt}”`, thread === 'internal' ? 'internal' : 'client');
-      commit({ ...t, comments: [...t.comments, { id: `cmt-${at}`, thread, by: author, at, text: body }], activity: [...t.activity, logged], updatedAt: at });
+      commit({ ...t, comments: [...t.comments, { id: `cmt-${at}`, thread, by: author, at, text: body, ...(on ? { on } : {}) }], activity: [...t.activity, logged], updatedAt: at });
       // Whoever is @mentioned hears about it: the team on internal notes, the client's people on the client thread.
       const people = thread === 'internal' ? team.map((m) => ({ id: m.id, name: m.name })) : (clients.find((c) => c.id === t.clientId)?.users ?? []).map((u) => ({ id: u.id, name: u.name }));
       const mentioned = people.filter((p) => body.includes(`@${p.name}`) && p.id !== authorId);
@@ -751,23 +833,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   /** The AI's read of a new ticket: the asset it is about, its category and priority, and who should work on it. */
-  const openCount = (id: string) => live.current.tickets.filter((t) => t.assigneeId === id && isOpen(t)).length;
   const triageFor = (clientId: string, title: string, description: string) => {
-    const { assets } = live.current;
+    const { assets, clients } = live.current;
+    const client = clients.find((c) => c.id === clientId)!;
     const asset = guessAsset(`${title} ${description}`, assets.filter((a) => a.clientId === clientId));
     const category = guessCategory(title, description);
     const severity = guessSeverity(title, description);
-    // A business issue goes to whichever business PIC has fewer open tickets.
-    const pick = category === 'business' ? (openCount('tm-adra') < openCount('tm-bhisma') ? 1 : 0) : 0;
-    return { assetId: asset?.id ?? '', category, severity, assigneeId: routeTo(category, taskTypeFor(title, description, category), pick) };
+    // To the client's frontend or backend developer, by the kind of work.
+    return { assetId: asset?.id ?? '', category, severity, assigneeId: routeTo(client, taskTypeFor(title, description, category)) };
   };
 
-  /** A new ticket, as the AI first reads it: everything filled in, waiting for QA to check it. */
+  /** A new ticket, as the AI first reads it: everything filled in and the initial response sent, waiting for the PM to review it. */
   const newTicket = (id: string, input: { clientId: string; reporterId: string; title: string; description: string; attachments: Attachment[] }, source: Ticket['source'], created: Activity, at: number): Ticket => {
-    const { team } = live.current;
+    const { team, clients } = live.current;
+    const client = clients.find((c) => c.id === input.clientId)!;
     const triage = triageFor(input.clientId, input.title, input.description);
     const dev = team.find((m) => m.id === triage.assigneeId);
-    const qa = team.find((m) => m.id === testerFor());
+    const pm = team.find((m) => m.id === pmFor(client));
     const ticket: Ticket = {
       id,
       title: input.title.trim(),
@@ -782,7 +864,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       status: 'new',
       severity: triage.severity,
       assigneeId: triage.assigneeId,
-      testerId: testerFor(),
+      testerId: testerFor(client),
       triage,
       firstRespondedAt: null,
       resolvedAt: null,
@@ -796,10 +878,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       comments: [],
       activity: [
         created,
-        activity(at + 1, { type: 'system' }, 'assignment', `AI suggested ${SEVERITY_LABEL[triage.severity]}, ${CATEGORY_LABEL[triage.category].replace(' issue', '')}, assigned to ${dev?.name ?? 'the team'}. Waiting for ${qa?.name ?? 'QA'} to confirm.`, 'internal'),
+        activity(at + 1, { type: 'system' }, 'assignment', `AI suggested ${SEVERITY_LABEL[triage.severity]}, ${CATEGORY_LABEL[triage.category].replace(' issue', '')}, developed by ${dev?.name ?? 'the team'}. Waiting for ${pm?.name ?? 'the PM'} to review.`, 'internal'),
       ],
     };
     ticket.plan = autoPlan(ticket);
+    // The AI's initial response goes out at once, with no one to confirm it.
+    const reporter = client.users.find((u) => u.id === input.reporterId);
+    const sla = getSla(ticket, policyFor(clients, live.current.policies, client.id), at);
+    const reply = responseDraftOf(ticket, live.current.assets.find((a) => a.id === ticket.assetId)?.name ?? 'your asset', reporter?.name.split(' ')[0] ?? 'there', sla.initialRca.due);
+    ticket.initialResponse = { text: reply, by: { type: 'system' }, at: at + 2 };
+    ticket.firstRespondedAt = at + 2;
+    ticket.activity.push(activity(at + 2, { type: 'system' }, 'response', reply));
     return ticket;
   };
 
@@ -854,11 +943,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         decision === 'approved'
           ? {
               ...t,
-              status: 'resolved',
-              resolvedAt: at,
               updatedAt: at,
               feedback: [...t.feedback, feedback],
-              activity: [...t.activity, activity(at, by, 'resolution', `Deployed by ${clientName}. Status changed from Ready to deploy to Resolved`)],
+              activity: [...t.activity, activity(at, by, 'status', `${clientName} approved the deploy. NXS deploys it next.`)],
             }
           : {
               ...t,
@@ -869,7 +956,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               activity: [...t.activity, activity(at, by, 'status', 'Declined the fix. Status changed from Ready to deploy to In progress')],
             };
       commit(next);
-      emit(decision === 'approved' ? 'ticket_resolved' : 'status_updated', next, decision === 'declined' ? note.trim() : undefined, true);
+      emit('status_updated', next, decision === 'declined' ? note.trim() : undefined, true);
       return true;
     },
     [commit, emit],
@@ -906,6 +993,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         contact: { name: '', title: '', email: '', phone: '' },
         slaPolicyId: (policies.find((p) => p.isDefault) ?? policies[0]).id,
         accountManagerId: currentUser.id,
+        testerId: currentUser.id,
+        devs: { frontend: currentUser.id, backend: currentUser.id },
         since: new Date(seed.clock()).toISOString().slice(0, 10),
         users: [],
       };
@@ -1000,6 +1089,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCategory,
     setAsset,
     confirmTriage,
+    sendInitialRca,
+    codeFixOf,
+    saveCodeFix,
+    approveFix,
+    passTest,
+    setSecurityIssue,
     setSeverity,
     setSlaExclusion,
     planTicket,

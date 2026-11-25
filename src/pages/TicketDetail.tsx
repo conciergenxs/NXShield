@@ -1,19 +1,22 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Sparkles, ShieldOff, ArrowLeft, ArrowRight, ArrowUp, Ban, CornerUpLeft, OctagonAlert, Timer, Check, ChevronDown, CircleCheck, CircleX, Lock, Plus, Send, ShieldCheck, UserPlus, Stethoscope, FileSearch, MessageSquare, RotateCcw, PenLine, History, X, User, FlaskConical, CircleUser, Signal, Tag, Building2, Boxes, Milestone, Layers, Hash, CalendarCheck, CalendarClock, CalendarDays, Activity as ActivityIcon } from 'lucide-react';
-import type { Activity, Attachment, Category, Severity, TaskType, Ticket, TicketStatus } from '../types';
-import { CATEGORIES, CATEGORY_LABEL, SEVERITIES, SEVERITY_LABEL, NEXT_STAGE, STATUS_LABEL, TASK_TYPES, TASK_TYPE_LABEL, TRANSITIONS, isOpen, isRework, moveLabel, sprintChoices } from '../lib/domain';
+import { Briefcase, Sparkles, ShieldOff, ArrowLeft, ArrowUp, Ban, CornerUpLeft, OctagonAlert, Timer, Check, ChevronDown, CircleCheck, CircleX, Lock, Plus, Send, ShieldCheck, UserPlus, Stethoscope, FileSearch, MessageSquare, RotateCcw, PenLine, History, X, User, FlaskConical, CircleUser, Signal, Tag, Building2, Boxes, Milestone, Layers, Hash, CalendarCheck, CalendarClock, CalendarDays, Activity as ActivityIcon } from 'lucide-react';
+import type { Activity, Actor, Attachment, CodeFix, CommentOn, Category, Severity, TaskType, TeamMember, Ticket, TicketStatus } from '../types';
+import { CATEGORIES, CATEGORY_LABEL, SEVERITIES, SEVERITY_LABEL, NEXT_STAGE, STATUS_LABEL, TASK_TYPES, TASK_TYPE_LABEL, TRANSITIONS, isOpen, isRework, moveBlockedBy, moveLabel, sprintChoices } from '../lib/domain';
 import { fmtDate, fmtDateTime, fmtDateYear, fmtDuration, fmtRelative, fmtTime } from '../lib/format';
 import { SLA_STATE_LABEL, type SlaClock } from '../lib/sla';
 import { useStore } from '../store';
 import { CategoryLabel, ClientLogo, SEVERITY_TONE, SLA_TONE, STATUS_ICON, STATUS_TONE, SeverityBadge, clockWord } from '../components/domain';
 import { Avatar, Badge, Button, Card, Empty, Field, TextArea, cx, usePopover, type Tone } from '../components/ui';
-import { analyze, answer, STARTERS, type Analysis } from '../lib/rcaAi';
+import { countLines, reviseCodeFix } from '../lib/codeFix';
+import { fullRcaPlan, imageTagOf, releaseNotesOf } from '../lib/release';
+import { analyze, answer, editInitialRca, STARTERS, type Analysis, type RcaDraftText, type RcaPart } from '../lib/rcaAi';
 import { stepStaffLine } from '../lib/assist';
 import { BadgeSelect, Dropdown, type BadgeOption } from '../components/pickers';
 import { AssignMenu } from '../components/AssignMenu';
 import { Attachments, Prop, RequestNotes } from '../components/detail';
+import { RichInput } from '../components/RichInput';
 import { TICKETS_VIEW_KEY } from '../components/Layout';
 import { CommentBox, withMentions } from '../components/comments';
 
@@ -21,14 +24,6 @@ import { CommentBox, withMentions } from '../components/comments';
 /* ---------- Status: where the ticket is, and the move to make ---------- */
 
 const STATUS_BY_LABEL = Object.fromEntries(Object.entries(STATUS_LABEL).map(([k, v]) => [v, k])) as Record<string, TicketStatus>;
-
-/** The main button: one step along the linear path. Blocked asks where the
- *  work carries on; Deployed has none, the client answers. */
-const NEXT_LABEL: Partial<Record<TicketStatus, string>> = {
-  in_progress: 'Send to testing',
-  waiting_testing: 'Start testing',
-  on_testing: 'Ready to deploy',
-};
 
 /** When the ticket last entered each stage, read from its activity. */
 function stageEntries(t: Ticket) {
@@ -51,90 +46,73 @@ function stageEntries(t: Ticket) {
  * the usual next step.
  */
 function StatusActions({ ticket }: { ticket: Ticket }) {
-  const { memberOf, changeStatus, confirmTriage, sendInitialResponse, setDialog, can } = useStore();
+  const { changeStatus, setDialog, can } = useStore();
   const menu = usePopover();
   const status = ticket.status;
   const next = NEXT_STAGE[status];
-  const blocked = status === 'blocked';
-  const member = memberOf(ticket.assigneeId);
   const editable = can('ticket.update');
+  // Only the moves that make sense from here, and only once what they need is in place.
   const moves = TRANSITIONS[status]
-    .filter((s) => s !== 'canceled' || can('ticket.cancel'))
+    .filter((s) => (s !== 'canceled' || can('ticket.cancel')) && !moveBlockedBy(ticket, s))
     .sort((a, b) => Number(b === next) - Number(a === next));
   const move = (to: TicketStatus) => {
     menu.setOpen(false);
     if (to === 'resolved') setDialog({ type: 'resolve', ticketId: ticket.id });
-    // Out of New is always QA confirming the AI's read: the RCA goes out with it.
-    else if (status === 'new' && to === 'in_progress') confirmTriage(ticket.id);
     else changeStatus(ticket.id, to);
   };
-  // In New the SLA asks for the reply first (T+1), then the initial RCA, which confirming sends (T+3).
-  const replyFirst = status === 'new' && !ticket.initialResponse;
-  const primaryLabel = blocked
-    ? 'Unblock'
-    : replyFirst
-      ? 'Send initial response'
-      : status === 'new'
-      ? `Send RCA and assign to ${member?.name.split(' ')[0] ?? 'the team'}`
-      : next
-        ? NEXT_LABEL[status] ?? `Move to ${STATUS_LABEL[next]}`
-        : '';
-  const onPrimary = () => (blocked ? setDialog({ type: 'unblock', ticketId: ticket.id }) : replyFirst ? sendInitialResponse(ticket.id) : next && move(next));
-  const Icon = STATUS_ICON[status];
 
   return (
     <div className="tdl-actions">
-      <div className="popover-anchor" ref={menu.ref}>
-        <button
-          type="button"
-          className={cx('tdl-status', `tone-${STATUS_TONE[status]}`)}
-          aria-haspopup="menu"
-          aria-expanded={menu.open}
-          disabled={!editable || moves.length === 0}
-          onClick={() => menu.setOpen(!menu.open)}
-        >
-          <Icon size={15} aria-hidden />
-          {STATUS_LABEL[status]}
-          {editable && moves.length > 0 && <ChevronDown size={15} aria-hidden className="tdl-status-caret" />}
-        </button>
-        {menu.open && (
-          <div className="popover move-menu" role="menu" aria-label="Move to">
-            {moves.map((to) => {
-              const ToIcon = isRework(status, to) ? CornerUpLeft : STATUS_ICON[to];
-              const label = moveLabel(status, to);
-              return (
-                <Fragment key={to}>
-                  {to === 'canceled' && moves.length > 1 && <div className="menu-sep" role="separator" />}
-                  <button type="button" role="menuitem" className={cx('move-item', `tone-${STATUS_TONE[to]}`)} onClick={() => move(to)}>
-                    <ToIcon size={16} aria-hidden className="move-item-icon" />
-                    <span className="move-item-text">
-                      <span className="move-item-name">
-                        {status === 'new' && to === 'in_progress' ? label.title : STATUS_LABEL[to]}
-                        {to === next && <span className="move-item-tag">Next step</span>}
-                      </span>
-                      <span className="move-item-hint">{label.hint}</span>
-                    </span>
-                  </button>
-                </Fragment>
-              );
-            })}
+      <div className="tdl-actions-row">
+        {editable && moves.length > 0 && (
+          <div className="popover-anchor" ref={menu.ref}>
+            <Button variant="secondary" aria-haspopup="menu" aria-expanded={menu.open} onClick={() => menu.setOpen(!menu.open)}>
+              Move to
+              <ChevronDown size={15} aria-hidden />
+            </Button>
+            {menu.open && (
+              <div className="popover move-menu" role="menu" aria-label="Move to">
+                {moves.map((to) => {
+                  const ToIcon = isRework(status, to) ? CornerUpLeft : STATUS_ICON[to];
+                  const label = moveLabel(status, to);
+                  return (
+                    <Fragment key={to}>
+                      {to === 'canceled' && moves.length > 1 && <div className="menu-sep" role="separator" />}
+                      <button type="button" role="menuitem" className={cx('move-item', `tone-${STATUS_TONE[to]}`)} onClick={() => move(to)}>
+                        <ToIcon size={16} aria-hidden className="move-item-icon" />
+                        <span className="move-item-text">
+                          <span className="move-item-name">
+                            {STATUS_LABEL[to]}
+                            {to === next && <span className="move-item-tag">Next step</span>}
+                          </span>
+                          <span className="move-item-hint">{label.hint}</span>
+                        </span>
+                      </button>
+                    </Fragment>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
-      {/* The next step's button lives with the step itself, below; only Unblock stays up here. */}
-      {editable && blocked && (
-        <Button variant="primary" onClick={onPrimary}>
-          {primaryLabel}
-          <ArrowRight size={15} aria-hidden />
-        </Button>
-      )}
+    </div>
+  );
+}
+
+/** The step's bar, at the end of the step: what happens next, and the one button that does it. Not floating. */
+function StepBar({ next, children }: { next?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="fs-bar">
+      <p className="fs-bar-next">{next}</p>
+      <div className="fs-bar-actions">{children}</div>
     </div>
   );
 }
 
 /** The stages in order, as one thin line: done, now, still to come. Blocked sits on In progress. */
-const PATH: TicketStatus[] = ['new', 'in_progress', 'waiting_testing', 'on_testing', 'ready_to_deploy', 'resolved'];
-const PATH_INDEX: Record<TicketStatus, number> = { new: 0, not_started: 1, in_progress: 1, blocked: 1, waiting_testing: 2, on_testing: 3, ready_to_deploy: 4, resolved: 5, canceled: -1 };
+const PATH: TicketStatus[] = ['new', 'not_started', 'in_progress', 'waiting_testing', 'on_testing', 'qa_passed', 'ready_to_deploy', 'resolved'];
+const PATH_INDEX: Record<TicketStatus, number> = { new: 0, not_started: 1, in_progress: 2, blocked: 2, waiting_testing: 3, on_testing: 4, qa_passed: 5, ready_to_deploy: 6, resolved: 7, canceled: -1 };
 
 function StageSteps({ ticket }: { ticket: Ticket }) {
   const { actorName, now } = useStore();
@@ -259,28 +237,37 @@ function activityLine(a: Activity) {
  * sent, and the resolution notes with the fix), the comments, and the activity log.
  */
 function TicketContent({ ticket, onAsk }: { ticket: Ticket; onAsk: () => void }) {
-  const { assetOf, tickets, actorName, now } = useStore();
+  const { assetOf, tickets, actorName, can, now } = useStore();
   const assetName = assetOf(ticket.assetId)?.name ?? 'the asset';
   // Made once from the client's brief, the asset and earlier tickets, as if on arrival.
   const analysis = useMemo(() => analyze(ticket, assetName, tickets), [ticket.id, assetName, tickets.length]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [tab, setTab] = useState<'rca' | 'comments' | 'activity'>('rca');
+  const [tab, setTab] = useState<'comments' | 'activity'>('comments');
+  // New, Not started, and In progress until the initial RCA goes out: the step is the page.
+  // Every stage is its step on the page; only Blocked and Canceled keep the plain view.
+  const focus = can('ticket.update') && ticket.status !== 'canceled';
   const history = useMemo(() => [...ticket.activity].reverse(), [ticket.activity]);
   const tabs = [
-    { key: 'rca' as const, label: 'Sent to client', icon: FileSearch },
     { key: 'comments' as const, label: 'Comments', icon: MessageSquare, count: ticket.comments.length },
     { key: 'activity' as const, label: 'Activity', icon: History, count: history.length },
   ];
   return (
     <>
-      <NextStep ticket={ticket} analysis={analysis} onAsk={onAsk} />
-      <section className="main-block tdl-brief" aria-label="Client brief">
-        <StageBanner ticket={ticket} />
-        <p className="description">{ticket.description}</p>
-        <RequestNotes request={ticket.request} />
-        <Attachments files={ticket.attachments} />
-      </section>
-      <section className="main-block" aria-label="RCA, comments and activity">
-        <div className="doc-tabs" role="tablist" aria-label="RCA, comments and activity">
+      {focus ? (
+        // A fresh step each time the work moves on, so answers from an earlier round don't carry over.
+        <FocusStep key={`${ticket.status}-${!!ticket.diagnosis}-${ticket.testResult?.at ?? 0}-${ticket.moveNotes.length}`} ticket={ticket} analysis={analysis} onAsk={onAsk} />
+      ) : (
+        <>
+          <NextStep ticket={ticket} analysis={analysis} onAsk={onAsk} />
+          <section className="main-block tdl-brief" aria-label="Client brief">
+            <StageBanner ticket={ticket} />
+            <p className="description">{ticket.description}</p>
+            <RequestNotes request={ticket.request} />
+            <Attachments files={ticket.attachments} />
+          </section>
+        </>
+      )}
+      <section className="main-block" aria-label="Comments and activity">
+        <div className="doc-tabs" role="tablist" aria-label="Comments and activity">
           {tabs.map((t) => (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={cx('doc-tab', tab === t.key && 'is-active')} onClick={() => setTab(t.key)}>
               <t.icon size={16} aria-hidden />
@@ -290,17 +277,6 @@ function TicketContent({ ticket, onAsk }: { ticket: Ticket; onAsk: () => void })
           ))}
         </div>
         <div className="ticket-panel" role="tabpanel">
-          {tab === 'rca' && (
-            <div className="tdl-rca">
-              {/* What the SLA asks NXS to send, in the order it falls due: the reply (T+1),
-                  the initial RCA (T+3), and the resolution notes with the fix. */}
-              {/* What went to the client, in order. Drafts live in the next step above, not here. */}
-              {!ticket.initialResponse && <p className="comments-empty">Nothing has gone to the client yet. Your next step is above.</p>}
-              {ticket.initialResponse && <InitialResponse ticket={ticket} />}
-              {ticket.diagnosis && <InitialRca ticket={ticket} analysis={analysis} />}
-              <ResolutionBlock ticket={ticket} />
-            </div>
-          )}
           {tab === 'comments' && <CommentsPanel ticket={ticket} />}
           {tab === 'activity' && (
             <ol className="timeline">
@@ -395,102 +371,68 @@ function DueLine({ clock, sentAt, sentLabel = 'Sent to the client' }: { clock: S
   );
 }
 
-/** The initial response (T+1): the AI's reply, ready when the ticket arrives; QA checks it and sends it. */
-function InitialResponse({ ticket }: { ticket: Ticket }) {
-  const { slaOf, responseDraftFor, saveResponseDraft, sendInitialResponse, can } = useStore();
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState('');
-  const sent = ticket.initialResponse;
-  const canSend = !sent && ticket.status !== 'canceled' && can('ticket.update');
-  const shown = sent?.text ?? responseDraftFor(ticket);
-  const error = text.trim().length < 20 ? 'Write the reply to the client.' : '';
+/** One thing that went to the client, in the side column: a few lines until opened. */
+function SentItem({ title, meta, children }: { title: string; meta: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="rca-block" role="group" aria-labelledby="rca-response">
-      <header className="rca-head">
-        <div>
-          <h3 id="rca-response" className="rca-title">
-            Initial response
-            {!sent && <Badge tone="purple">AI draft</Badge>}
-          </h3>
-          <p className="rca-sub">
-            <DueLine clock={slaOf(ticket).firstResponse} sentAt={sent?.at} />
-          </p>
-        </div>
-        {canSend && !editing && (
-          <div className="rca-head-actions">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setText(shown);
-                setEditing(true);
-              }}
-            >
-              <PenLine size={15} aria-hidden />
-              Edit
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => sendInitialResponse(ticket.id)}>
-              <Send size={15} aria-hidden />
-              Send
-            </Button>
-          </div>
-        )}
-      </header>
-      {editing ? (
-        <form
-          className="form-stack"
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (error) return;
-            saveResponseDraft(ticket.id, text);
-            setEditing(false);
-          }}
-        >
-          <Field label="Reply to the client" htmlFor="resp-text" error={error}>
-            <TextArea id="resp-text" rows={5} value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
-          <div className="rca-actions">
-            <span />
-            <span className="rca-actions-end">
-              <Button variant="secondary" size="sm" onClick={() => setEditing(false)}>
-                Cancel
-              </Button>
-              <Button variant="primary" size="sm" type="submit">
-                Save
-              </Button>
-            </span>
-          </div>
-        </form>
-      ) : (
-        <p className="rca-response-text">{shown}</p>
-      )}
-    </div>
+    <li className={cx('sent-item', open && 'is-open')}>
+      <p className="sent-item-title">{title}</p>
+      <p className="sent-item-meta">{meta}</p>
+      <div className="sent-item-body">{children}</div>
+      <button type="button" className="link-btn sent-item-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Show less' : 'Read all'}
+      </button>
+    </li>
   );
 }
 
-/** The resolution notes as they went to the client with the fix: what was done, the proof, and the deploy. */
-function ResolutionBlock({ ticket }: { ticket: Ticket }) {
-  const { slaOf, actorName } = useStore();
-  const sent = ticket.handoffs[ticket.handoffs.length - 1];
-  const deployed = ticket.status === 'resolved' ? [...ticket.activity].reverse().find((a) => a.kind === 'resolution') : undefined;
-  if (!sent) return null;
+/** What has gone to the client, in order: the AI's reply, the initial RCA, and the fix's notes. */
+function SentToClient({ ticket }: { ticket: Ticket }) {
+  const { slaOf, actorName, reporterOf } = useStore();
+  const sla = slaOf(ticket);
+  const reporter = reporterOf(ticket);
+  const by = (a: Actor) => (a.type === 'system' ? 'AI' : actorName(a));
+  const when = (at: number, due?: number) => `${fmtDateTime(at)}${due != null ? (at <= due ? ', on time' : ', late') : ''}`;
+  const reply = ticket.initialResponse;
+  const rca = ticket.diagnosis;
+  const fix = ticket.handoffs[ticket.handoffs.length - 1];
   return (
-    <div className="rca-block" role="group" aria-labelledby="rca-resolution">
-      <header className="rca-head">
-        <div>
-          <h3 id="rca-resolution" className="rca-title">
-            Resolution notes
-          </h3>
-          <p className="rca-sub">
-            <DueLine clock={slaOf(ticket).resolution} sentAt={sent.at} sentLabel={`Sent with the fix by ${actorName(sent.by)},`} />
-          </p>
-        </div>
-      </header>
-      {sent.note && <p className="rca-response-text">{sent.note}</p>}
-      <Attachments files={sent.attachments} />
-      {deployed && <p className="rca-sub">Deployed by {actorName(deployed.actor)}, {fmtDateTime(deployed.at)}</p>}
-    </div>
+    <section className="aside-sent" aria-labelledby="sent-title">
+      <h3 id="sent-title" className="aside-sent-title">
+        Sent to {reporter?.name.split(' ')[0] ?? 'the client'}
+      </h3>
+      {!reply && !rca && !fix ? (
+        <p className="aside-sent-empty">Nothing yet.</p>
+      ) : (
+        <ol className="aside-sent-list">
+          {reply && (
+            <SentItem title="Initial response" meta={`By ${by(reply.by)} · ${when(reply.at, sla.firstResponse?.due)}`}>
+              <p>{reply.text}</p>
+            </SentItem>
+          )}
+          {rca && (
+            <SentItem title="Initial RCA" meta={`By ${by(rca.by)} · ${when(rca.at, sla.initialRca?.due)}`}>
+              <dl className="sent-rca">
+                <dt>Issue</dt>
+                <dd>{rca.problem}</dd>
+                <dt>Cause</dt>
+                <dd>{rca.issue}</dd>
+                <dt>How it will be fixed</dt>
+                <dd>{rca.fix}</dd>
+                <dt>Time to fix</dt>
+                <dd>By {fmtDateTime(rca.fixBy ?? sla.resolution.due)}</dd>
+              </dl>
+            </SentItem>
+          )}
+          {fix && (
+            <SentItem title="Release" meta={`By ${by(fix.by)} · ${when(fix.at, sla.resolution.due)}${ticket.resolvedAt ? ` · deployed ${fmtDateTime(ticket.resolvedAt)}` : ''}`}>
+              {fix.note && <p>{fix.note}</p>}
+              <Attachments files={fix.attachments} />
+            </SentItem>
+          )}
+        </ol>
+      )}
+    </section>
   );
 }
 
@@ -524,7 +466,7 @@ function useAiWork(key: string, ms: number, active: boolean) {
 function AiWorking({ lines, line }: { lines: string[]; line: number }) {
   return (
     <div className="ns-working" role="status" aria-live="polite">
-      <Sparkles size={16} aria-hidden className="ns-working-icon" />
+      <span className="ai-ring ns-working-icon" aria-hidden />
       <ol>
         {lines.map((l, i) => (
           <li key={l} className={cx(i < line && 'is-done', i === line && 'is-now')}>
@@ -537,157 +479,1114 @@ function AiWorking({ lines, line }: { lines: string[]; line: number }) {
   );
 }
 
-function NextStep({ ticket, analysis, onAsk }: { ticket: Ticket; analysis: Analysis; onAsk: () => void }) {
-  const { slaOf, assetOf, reporterOf, memberOf, currentUser, responseDraftFor, saveResponseDraft, sendInitialResponse, setSeverity, confirmTriage, changeStatus, setDialog, planTicket, can, now } = useStore();
-  const [reply, setReply] = useState<string | null>(null);
+/* ---------- The first three steps, as the page itself ----------
+   New (the PM), Not started (QA) and In progress until the initial RCA goes out
+   (the developer) each make the page about one job: the client's report, the
+   AI's work for that job, and one bar that says what happens next. */
+
+const EFFECT_NOTE: Record<Severity, string> = {
+  critical: 'It stops a core flow, with no way around it.',
+  medium: 'Part of a flow fails, but people can still get through.',
+  low: 'A minor problem with little effect day to day.',
+};
+const CATEGORY_NOTE: Record<Category, string> = {
+  tech: 'Something broke; it isn’t a request.',
+  business: 'It’s about money, points or numbers.',
+  operational: 'Content or setup the client asked for.',
+};
+
+/** The client's report: their words, any request notes, and their files. Compact once the work has moved past it. */
+function ReportBlock({ ticket, compact }: { ticket: Ticket; compact?: boolean }) {
+  const { reporterOf } = useStore();
+  const reporter = reporterOf(ticket);
+  // Open while it's the step's material; folded once the work has moved past it.
+  const [open, setOpen] = useState(!compact);
+  const files = ticket.attachments.length;
+  return (
+    <section className={cx('fs-report', !open && 'is-folded')} aria-label="The client's report">
+      <div className="fs-report-meta">
+        <Avatar name={reporter?.name ?? 'Client'} size={22} />
+        <span>
+          <strong>{reporter?.name ?? 'The client'}</strong> {ticket.source.channel === 'portal' ? 'reported it from the Client Portal' : 'reported it, logged by NXS'} · {fmtDateTime(ticket.createdAt)}
+          {!open && files > 0 && ` · ${files} ${files === 1 ? 'file' : 'files'}`}
+        </span>
+        <button type="button" className="fs-report-toggle" aria-expanded={open} aria-label={open ? 'Hide the report' : 'Show the report'} onClick={() => setOpen(!open)}>
+          <ChevronDown size={16} aria-hidden />
+        </button>
+      </div>
+      {open && (
+        <div className="fs-report-body">
+          <p className="fs-report-text">{ticket.description}</p>
+          <RequestNotes request={ticket.request} />
+          <Attachments files={ticket.attachments} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Whose step it is and what it is, so the page explains itself before any scrolling. */
+function StepHead({ person, title }: { person?: Pick<TeamMember, 'id' | 'name' | 'photo'> | null; title: string }) {
+  const { currentUser } = useStore();
+  const mine = !!person && person.id === currentUser.id;
+  return (
+    <header className="fs-head">
+      {person && (
+        <p className="fs-who">
+          <Avatar name={person.name} size={18} src={person.photo} />
+          {mine ? 'Now with you' : `Now with ${person.name.split(' ')[0]}`}
+        </p>
+      )}
+      <h2 className="fs-title">{title}</h2>
+    </header>
+  );
+}
+
+/** A card for the AI's work in this step, marked as the AI's. */
+function AiCard({ id, title, note, working, children }: { id: string; title: string; note: ReactNode; working?: boolean; children: ReactNode }) {
+  return (
+    <section className="fs-card" aria-labelledby={id}>
+      <header className="fs-card-head">
+        <h3 id={id}>{title}</h3>
+        {/* The AI's mark: a colour-shifting edge, turning while it works. */}
+        <span className={cx('ai-chip', working && 'is-working')}>Suggested by AI</span>
+        <span className="fs-card-note">{note}</span>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** The asset's staging address: the same site on its staging host. */
+function stagingUrl(url?: string) {
+  if (!url) return 'https://staging.example';
+  const u = url.replace(/^(https?:\/\/)(www\.)?/, '$1');
+  return u.replace(/^(https?:\/\/)/, '$1staging.');
+}
+
+const FIX_ASKS = ['Add a test', 'Add logging', 'Keep it smaller'];
+
+/** The AI's code fix: what it does, the files it changes as small diffs, and a composer to ask for changes. */
+function FixByAi({ ticket, onBusy }: { ticket: Ticket; onBusy: (busy: boolean) => void }) {
+  const { codeFixOf, saveCodeFix } = useStore();
+  const fix = codeFixOf(ticket);
+  const [open, setOpen] = useState<string[]>(() => [fix.files[0]?.path].filter(Boolean) as string[]);
+  const [ask, setAsk] = useState('');
+  const [thread, setThread] = useState<{ id: number; q: string; reply: string | null; before: CodeFix | null }[]>([]);
+  const [fresh, setFresh] = useState<string[]>([]);
+  const threadRef = useRef<HTMLOListElement>(null);
+  const busy = thread.some((x) => x.reply == null);
+  const count = countLines(fix);
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [thread]);
+  const run = (q: string) => {
+    const said = q.trim();
+    if (!said || busy) return;
+    setAsk('');
+    setFresh([]);
+    const before = fix;
+    const r = reviseCodeFix(before, said);
+    const id = Date.now();
+    setThread((t) => [...t, { id, q: said, reply: null, before: null }]);
+    onBusy(true);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.setTimeout(() => {
+      if (r.changed.length || r.fix !== before) saveCodeFix(ticket.id, r.fix);
+      setThread((t) => t.map((x) => (x.id === id ? { ...x, reply: r.reply, before: r.fix !== before ? before : null } : x)));
+      setFresh(r.changed);
+      setOpen((o) => [...new Set([...o, ...r.changed])]);
+      onBusy(false);
+    }, reduce ? 200 : 1800);
+  };
+  const undo = (id: number, before: CodeFix) => {
+    saveCodeFix(ticket.id, before);
+    setThread((t) => t.map((x) => (x.id === id ? { ...x, reply: 'Undone. The fix is back as it was.', before: null } : x)));
+    setFresh([]);
+  };
+  const latest = thread[thread.length - 1];
+  return (
+    <>
+      <dl className="rca-fields rca-form fix-meta">
+        <div>
+          <dt>
+            What it does<small>From the initial RCA</small>
+          </dt>
+          <dd>{fix.summary}</dd>
+        </div>
+        <div>
+          <dt>
+            Where<small>Repository and branch</small>
+          </dt>
+          <dd className="fix-where">
+            <code>{fix.repo}</code>
+            <span className="muted">on</span>
+            <code>{fix.branch}</code>
+          </dd>
+        </div>
+      </dl>
+      <div className={cx('fix-files', busy && 'is-rewriting')}>
+        <p className="fix-files-head">
+          {fix.files.length} {fix.files.length === 1 ? 'file' : 'files'} changed
+          <span className="fix-plus">+{count.add}</span>
+          <span className="fix-minus">−{count.del}</span>
+        </p>
+        <ul className="fix-file-list">
+          {fix.files.map((f) => {
+            const shown = open.includes(f.path);
+            const plus = f.lines.filter((l) => l.t === '+').length;
+            const minus = f.lines.filter((l) => l.t === '-').length;
+            return (
+              <li key={f.path} className={cx('fix-file', fresh.includes(f.path) && 'is-changed')}>
+                <button type="button" className="fix-file-head" aria-expanded={shown} onClick={() => setOpen((o) => (shown ? o.filter((x) => x !== f.path) : [...o, f.path]))}>
+                  <ChevronDown size={15} aria-hidden className="fix-file-caret" />
+                  <code className="fix-file-path">{f.path}</code>
+                  <span className="fix-file-count">
+                    <span className="fix-plus">+{plus}</span>
+                    {minus > 0 && <span className="fix-minus">−{minus}</span>}
+                  </span>
+                </button>
+                {shown && (
+                  <>
+                    <p className="fix-file-note">{f.note}</p>
+                    <pre className="fix-diff" aria-label={`Changes to ${f.path}`}>
+                      {f.lines.map((l, i) => (
+                        <span key={i} className={cx('fix-line', l.t === '+' && 'is-add', l.t === '-' && 'is-del')}>
+                          <span className="fix-sign" aria-hidden>
+                            {l.t === ' ' ? '' : l.t === '-' ? '−' : '+'}
+                          </span>
+                          {l.text}
+                        </span>
+                      ))}
+                    </pre>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <div className="rca-chat">
+        {thread.length > 0 && (
+          <ol ref={threadRef} className="rca-thread" aria-label="What you asked the AI">
+            {thread.map((x) => (
+              <li key={x.id}>
+                <p className="rca-me">{x.q}</p>
+                <p className="rca-said" role={x === latest ? 'status' : undefined}>
+                  <span className={cx('ai-ring', x.reply != null && 'is-still')} aria-hidden />
+                  <span>
+                    {x.reply ?? 'Changing the code…'}
+                    {x === latest && x.before && (
+                      <button type="button" className="link-btn rca-undo" onClick={() => undo(x.id, x.before!)}>
+                        Undo
+                      </button>
+                    )}
+                  </span>
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+        <form
+          className="rca-composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(ask);
+          }}
+        >
+          <label htmlFor="fix-ask-input" className="sr-only">
+            Tell the AI what to change in the fix
+          </label>
+          <textarea
+            id="fix-ask-input"
+            className="rca-composer-input"
+            rows={2}
+            placeholder={thread.length ? 'Anything else to change?' : 'Tell the AI what to change in this fix…'}
+            value={ask}
+            disabled={busy}
+            onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                run(ask);
+              }
+            }}
+          />
+          <div className="rca-composer-foot">
+            <div className="rca-composer-asks">
+              {FIX_ASKS.map((x) => (
+                <button key={x} type="button" className="rca-ask-chip" disabled={busy} onClick={() => run(x)}>
+                  {x}
+                </button>
+              ))}
+            </div>
+            <button type="submit" className="rca-composer-send" aria-label="Send to the AI" disabled={!ask.trim() || busy}>
+              <ArrowUp size={16} aria-hidden />
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
+const RCA_ASKS = ['Less technical', 'Shorter', 'More detail on the fix'];
+const PART_WORD: Record<RcaPart, string> = { problem: 'issue', issue: 'cause', fix: 'fix' };
+
+type RcaExchange = { id: number; q: string; reply: string | null; parts: RcaPart[]; before: RcaDraftText | null };
+
+/** The initial RCA, changed by talking to the AI under it: a short thread of what was asked and what changed, then the composer. */
+function RcaByAi({ ticket, analysis, onBusy }: { ticket: Ticket; analysis: Analysis; onBusy: (busy: boolean) => void }) {
+  const { saveRcaDraft } = useStore();
+  const [ask, setAsk] = useState('');
+  const [thread, setThread] = useState<RcaExchange[]>([]);
+  const [fresh, setFresh] = useState<RcaPart[]>([]);
+  const threadRef = useRef<HTMLOListElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const busy = thread.some((x) => x.reply == null);
+  // The thread keeps every exchange but stays a fixed height: it scrolls, and follows the newest.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    setOverflowing(el.scrollHeight > el.clientHeight + 1);
+  }, [thread]);
+  const working = thread.find((x) => x.reply == null);
+  const base = ticket.rcaDraft ?? analysis;
+  const current: RcaDraftText = { problem: base.problem ?? analysis.problem, issue: base.issue, fix: base.fix };
+  const run = (q: string) => {
+    const said = q.trim();
+    if (!said || busy) return;
+    setAsk('');
+    setFresh([]);
+    const before = current;
+    const r = editInitialRca(before, said);
+    const id = Date.now();
+    setThread((t) => [...t, { id, q: said, reply: null, parts: r.changed, before: null }]);
+    onBusy(true);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.setTimeout(() => {
+      if (r.changed.length) saveRcaDraft(ticket.id, r.draft);
+      setThread((t) => t.map((x) => (x.id === id ? { ...x, reply: r.reply, before: r.changed.length ? before : null } : x)));
+      setFresh(r.changed);
+      onBusy(false);
+    }, reduce ? 200 : 1600);
+  };
+  const undo = (x: RcaExchange) => {
+    if (x.before) saveRcaDraft(ticket.id, x.before);
+    setThread((t) => t.map((y) => (y.id === x.id ? { ...y, reply: `Undone. The ${x.parts.map((p) => PART_WORD[p]).join(' and ')} is back as it was.`, before: null } : y)));
+    setFresh(x.parts);
+  };
+  const latest = thread[thread.length - 1];
+  return (
+    <>
+      {/* Mounted afresh after each exchange, so a part changed twice glows twice. */}
+      <InitialRca key={`${thread.length}-${busy}`} ticket={ticket} analysis={analysis} embedded rewriting={working?.parts} changed={busy ? undefined : fresh} />
+      <div className="rca-chat">
+        {thread.length > 0 && (
+          <ol ref={threadRef} className={cx('rca-thread', overflowing && 'is-overflowing')} aria-label="What you asked the AI">
+            {thread.map((x) => (
+              <li key={x.id}>
+                <p className="rca-me">{x.q}</p>
+                <p className="rca-said" role={x === latest ? 'status' : undefined}>
+                  <span className={cx('ai-ring', x.reply != null && 'is-still')} aria-hidden />
+                  <span>
+                    {x.reply ?? (x.parts.length ? `Rewriting the ${x.parts.map((p) => PART_WORD[p]).join(' and ')}…` : 'Reading your note…')}
+                    {x === latest && x.before && (
+                      <button type="button" className="link-btn rca-undo" onClick={() => undo(x)}>
+                        Undo
+                      </button>
+                    )}
+                  </span>
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+        <form
+          className="rca-composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(ask);
+          }}
+        >
+          <label htmlFor="rca-ask-input" className="sr-only">
+            Tell the AI what to change in the initial RCA
+          </label>
+          <textarea
+            id="rca-ask-input"
+            className="rca-composer-input"
+            rows={2}
+            placeholder={thread.length ? 'Anything else to change?' : 'Tell the AI what to change in this RCA…'}
+            value={ask}
+            disabled={busy}
+            onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                run(ask);
+              }
+            }}
+          />
+          <div className="rca-composer-foot">
+            <div className="rca-composer-asks">
+              {RCA_ASKS.map((x) => (
+                <button key={x} type="button" className="rca-ask-chip" disabled={busy} onClick={() => run(x)}>
+                  {x}
+                </button>
+              ))}
+            </div>
+            <button type="submit" className="rca-composer-send" aria-label="Send to the AI" disabled={!ask.trim() || busy}>
+              <ArrowUp size={16} aria-hidden />
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
+
+function FocusStep({ ticket, analysis, onAsk }: { ticket: Ticket; analysis: Analysis; onAsk: () => void }) {
+  const { assetOf, reporterOf, memberOf, clientOf, confirmTriage, sendInitialRca, changeStatus, approveFix, codeFixOf, actorName, passTest, setSecurityIssue, now } = useStore();
+  const asset = assetOf(ticket.assetId);
+  const client = clientOf(ticket.clientId);
+  const reporter = reporterOf(ticket);
+  const dev = memberOf(ticket.assigneeId);
+  const tester = memberOf(ticket.testerId);
+  const step =
+    ticket.status === 'blocked'
+      ? 'blocked'
+      : ticket.status === 'new'
+      ? 'review'
+      : ticket.status === 'not_started'
+        ? 'check'
+        : ticket.status === 'waiting_testing'
+          ? 'wait'
+          : ticket.status === 'on_testing'
+            ? 'test'
+            : ticket.status === 'qa_passed'
+              ? 'release'
+            : ticket.status === 'ready_to_deploy'
+              ? 'deploy'
+              : ticket.status === 'resolved'
+                ? 'done'
+                : ticket.diagnosis
+                  ? 'fix'
+                  : 'rca';
+  const reading = useAiWork(`review:${ticket.id}`, 2400, step === 'review');
+  const checking = useAiWork(`check:${ticket.id}`, 2000, step === 'check');
+  const drafting = useAiWork(`rca:${ticket.id}`, 2000, step === 'rca');
+  const coding = useAiWork(`fix:${ticket.id}:${ticket.moveNotes.length}`, 2600, step === 'fix');
+  const [answer, setAnswer] = useState<'yes' | 'no' | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [verdict, setVerdict] = useState<'pass' | 'fail' | null>(null);
+  const [testNote, setTestNote] = useState('');
+  const [testProof, setTestProof] = useState<Attachment[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [tag, setTag] = useState<string | null>(null);
+  const [checked, setChecked] = useState('');
+  const [proof, setProof] = useState<Attachment[]>([]);
+  const [tried, setTried] = useState(false);
+  const first = (m?: { name: string } | null, or = 'the team') => m?.name.split(' ')[0] ?? or;
+  const reporterName = (id: string) => client?.users.find((u) => u.id === id)?.name ?? 'the client';
+  const pm = memberOf(client?.accountManagerId ?? null);
+  const plan = ticket.plan ?? {};
+  const task = plan.taskType === 'backend' ? 'Backend' : 'Frontend';
+  const p = ticket.severity ? SEVERITY_LABEL[ticket.severity] : 'this priority';
+
+  // Why the AI set each property, beside it, so the PM checks reasons instead of guessing.
+  const rows = usePropRows(
+    ticket,
+    step === 'review'
+      ? {
+          priority: ticket.severity ? EFFECT_NOTE[ticket.severity] : undefined,
+          assignee: `${task} work on ${client?.name ?? 'this client'} goes to ${first(dev)}.`,
+          tester: `${client?.name ?? 'The client'}’s QA. Checks the issue next.`,
+          taskType: plan.taskType === 'backend' ? 'It’s about the data or a sync behind the page.' : 'It’s about what a page shows.',
+          asset: `What the report describes happens on ${asset?.name ?? 'this asset'}.`,
+          category: CATEGORY_NOTE[ticket.category],
+          sprint: 'This week’s sprint.',
+          points: `A first estimate for ${p} ${task.toLowerCase()} work.`,
+          expected: `The fix time for ${p} in the SLA.`,
+        }
+      : {},
+  );
+
+
+  if (step === 'review')
+    return (
+      <div className="fs">
+        <StepHead person={pm} title="Review the properties" />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} />
+        <AiCard id="fs-props-title" title="Properties" working={!reading.done} note={`Read from the report at ${fmtTime(ticket.createdAt)}. Change any that are off.`}>
+          {reading.done ? (
+            <dl className="props is-rows fs-props ns-fade">
+              {rows.priority}
+              {rows.assignee}
+              {rows.tester}
+              {rows.taskType}
+              {rows.asset}
+              {rows.category}
+              {rows.sprint}
+              {rows.points}
+              {rows.expected}
+            </dl>
+          ) : (
+            <AiWorking lines={[`Reading ${first(reporter, 'the client')}’s report`, `Matching it to ${client?.name ?? 'the client'}’s assets`, 'Setting the properties']} line={reading.line} />
+          )}
+        </AiCard>
+        {reading.done && (
+          <StepBar
+            next={
+              <>
+                Next, <strong>{first(tester, 'QA')}</strong> checks that the issue is real.
+              </>
+            }
+          >
+            <Button variant="primary" onClick={() => confirmTriage(ticket.id)}>
+              Confirm and send to {first(tester, 'QA')}
+            </Button>
+          </StepBar>
+        )}
+      </div>
+    );
+
+  if (step === 'check') {
+    const error = answer === 'no' ? (checked.trim().length < 5 ? 'Say what you checked.' : proof.length === 0 ? 'Add a screenshot or recording as proof.' : '') : '';
+    const submit = () => {
+      if (answer === 'yes') changeStatus(ticket.id, 'in_progress');
+      if (answer === 'no') {
+        setTried(true);
+        if (!error) changeStatus(ticket.id, 'canceled', { reason: `Could not be reproduced. ${checked.trim()}`, proof });
+      }
+    };
+    return (
+      <div className="fs">
+        <StepHead person={tester} title="Check that the issue is real" />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} />
+        <AiCard id="fs-found-title" title="What the AI found" working={!checking.done} note="Check it yourself before you answer.">
+          {checking.done ? (
+            <dl className="fs-found ns-fade">
+              <div>
+                <dt>What happens</dt>
+                <dd>{analysis.problem}</dd>
+              </div>
+              <div>
+                <dt>Where it likely is</dt>
+                <dd>{analysis.issue}</dd>
+              </div>
+              {analysis.similar.length > 0 && (
+                <div>
+                  <dt>Seen before</dt>
+                  <dd>
+                    {analysis.similar.slice(0, 2).map((x, i) => (
+                      <Fragment key={x.id}>
+                        {i > 0 && ', '}
+                        <Link to={`/tickets/${x.id}`}>{x.id}</Link> {x.title}
+                        {x.tookMs != null && <span className="muted"> (fixed in {fmtDuration(x.tookMs)})</span>}
+                      </Fragment>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          ) : (
+            <AiWorking lines={[`Reading ${first(reporter, 'the client')}’s report`, `Looking at ${asset?.name ?? 'the asset'}`, 'Finding earlier tickets like it']} line={checking.line} />
+          )}
+        </AiCard>
+        {checking.done && (
+          <>
+            <fieldset className="fs-choice">
+              <legend>Does it happen?</legend>
+              <div className="fs-choice-row">
+                <label className={cx('fs-option', answer === 'yes' && 'is-picked')}>
+                  <input type="radio" name="fs-answer" checked={answer === 'yes'} onChange={() => setAnswer('yes')} />
+                  <span>
+                    <strong>Yes, it happens</strong>
+                    <span>It goes to {first(dev, 'the developer')}, who sends the initial RCA.</span>
+                  </span>
+                </label>
+                <label className={cx('fs-option', answer === 'no' && 'is-picked')}>
+                  <input type="radio" name="fs-answer" checked={answer === 'no'} onChange={() => setAnswer('no')} />
+                  <span>
+                    <strong>No, it doesn’t</strong>
+                    <span>It closes as canceled, with your proof.</span>
+                  </span>
+                </label>
+              </div>
+              {answer === 'no' && (
+                <Field label="What you checked" htmlFor="fs-checked" hint={`${first(reporter, 'The client')} sees this and your proof.`} error={tried ? error : ''}>
+                  <RichInput id="fs-checked" value={checked} onChange={setChecked} files={proof} onFilesChange={setProof} invalid={tried && !!error} placeholder="Followed the report on desktop and on a phone; bank transfer shows the virtual account number." autoFocus />
+                </Field>
+              )}
+            </fieldset>
+          </>
+        )}
+        {checking.done && (
+          <StepBar
+            next={
+              !answer ? (
+                'Answer “Does it happen?” above to go on.'
+              ) : answer === 'no' ? (
+                <>
+                  It closes as canceled. <strong>{first(reporter, 'The client')}</strong> sees why.
+                </>
+              ) : (
+                <>
+                  Next, <strong>{first(dev, 'the developer')}</strong> reviews the initial RCA and sends it to {first(reporter, 'the client')}.
+                </>
+              )
+            }
+          >
+            <Button variant={answer === 'no' ? 'danger' : 'primary'} disabled={!answer} onClick={submit}>
+              {answer === 'no' ? 'Cancel with proof' : `Send to ${first(dev, 'the developer')}`}
+            </Button>
+          </StepBar>
+        )}
+      </div>
+    );
+  }
+
+  const fix = step === 'wait' || step === 'test' || step === 'release' ? codeFixOf(ticket) : null;
+  const stagingCard = fix && (
+    <section className="fs-plain" aria-labelledby="fs-staging-title">
+      <h3 id="fs-staging-title" className="fs-plain-title">
+        On staging
+      </h3>
+      <dl className="rca-fields rca-form">
+        <div>
+          <dt>
+            Try it at<small>Staging, not live</small>
+          </dt>
+          <dd>
+            <a href={stagingUrl(asset?.url)} target="_blank" rel="noopener noreferrer" className="fix-link">
+              {stagingUrl(asset?.url).replace(/^https?:\/\//, '')}
+            </a>
+          </dd>
+        </div>
+        <div>
+          <dt>
+            The fix<small>What changed</small>
+          </dt>
+          <dd>
+            {fix.summary}
+            <span className="fix-changed-line">
+              {fix.files.length} {fix.files.length === 1 ? 'file' : 'files'} changed <span className="fix-plus">+{countLines(fix).add}</span> <span className="fix-minus">−{countLines(fix).del}</span> · <code>{fix.branch}</code>
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt>
+            Approved by<small>Put on staging</small>
+          </dt>
+          <dd>{fix.stagedAt ? `${fix.stagedBy ? actorName(fix.stagedBy) : (dev?.name ?? 'The developer')}, ${fmtDateTime(fix.stagedAt)}` : (dev?.name ?? 'The developer')}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+
+  if (step === 'blocked') {
+    const blocker = ticket.blockers[ticket.blockers.length - 1];
+    const back: TicketStatus = blocker?.from && blocker.from !== 'blocked' ? blocker.from : 'in_progress';
+    const holder = back === 'waiting_testing' || back === 'on_testing' ? tester : dev;
+    return (
+      <div className="fs">
+        <StepHead person={holder} title="Clear the blocker" />
+        <ReportBlock key={step} ticket={ticket} compact />
+        <section className="fs-plain fs-blocked" aria-labelledby="fs-blocked-title">
+          <h3 id="fs-blocked-title" className="fs-plain-title">
+            <Ban size={17} aria-hidden />
+            Blocked
+          </h3>
+          <dl className="rca-fields rca-form">
+            <div>
+              <dt>
+                What’s blocking it<small>Logged when it stopped</small>
+              </dt>
+              <dd>{blocker?.details ?? 'No reason given.'}</dd>
+            </div>
+            <div>
+              <dt>
+                Since<small>How long it’s waited</small>
+              </dt>
+              <dd>
+                {blocker ? (
+                  <>
+                    <strong>{fmtDuration(now - blocker.at)}</strong>
+                    <span className="fix-changed-line">
+                      {actorName(blocker.by)} blocked it, {fmtDateTime(blocker.at)}
+                    </span>
+                  </>
+                ) : (
+                  '—'
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Paused at<small>Where it picks up again</small>
+              </dt>
+              <dd>{STATUS_LABEL[back]}</dd>
+            </div>
+            <div>
+              <dt>
+                The client<small>What they see</small>
+              </dt>
+              <dd>
+                Still <strong>In progress</strong>, with the usual updates. Blocked stays inside NXS.
+              </dd>
+            </div>
+          </dl>
+          <Field label="How it was cleared" optional htmlFor="fs-cleared" hint="Goes into the activity log, so the team knows next time.">
+            <TextArea id="fs-cleared" rows={2} value={testNote} onChange={(e) => setTestNote(e.target.value)} placeholder="The platform team upgraded the Meta app to API v21." />
+          </Field>
+        </section>
+        <StepBar
+          next={
+            <>
+              It goes back to <strong>{STATUS_LABEL[back]}</strong> with <strong>{first(holder, 'the team')}</strong>.
+            </>
+          }
+        >
+          <Button variant="primary" onClick={() => changeStatus(ticket.id, back, { reason: testNote.trim() || undefined })}>
+            Unblock and continue
+          </Button>
+        </StepBar>
+      </div>
+    );
+  }
+
+  if (step === 'wait')
+    return (
+      <div className="fs">
+        <StepHead person={tester} title="Start testing the fix" />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} compact />
+        {stagingCard}
+        <StepBar
+          next={
+            <>
+              You test it on staging, then pass it or send it back to <strong>{first(dev, 'the developer')}</strong>.
+            </>
+          }
+        >
+          <Button variant="primary" onClick={() => changeStatus(ticket.id, 'on_testing')}>
+            Start testing
+          </Button>
+        </StepBar>
+      </div>
+    );
+
+  if (step === 'test') {
+    // Passing needs the release notes the client gets (proof is optional); failing needs what still goes wrong.
+    const failError = verdict === 'fail' && testNote.trim().length < 5 ? 'Say what still goes wrong.' : verdict === 'pass' && testNote.trim().length < 10 ? 'Write the release notes, or generate a draft with AI.' : '';
+    // Like a commit message: the AI drafts it from the RCA and the approved fix, and QA edits it.
+    const generate = () => {
+      if (generating) return;
+      setGenerating(true);
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      window.setTimeout(() => {
+        setTestNote(releaseNotesOf(ticket, asset?.name ?? 'the asset', ''));
+        setGenerating(false);
+      }, reduce ? 150 : 1200);
+    };
+    const submit = () => {
+      setTried(true);
+      if (verdict === 'pass' && !failError) passTest(ticket.id, testNote, testProof);
+      if (verdict === 'fail' && !failError) changeStatus(ticket.id, 'in_progress', { reason: testNote.trim() });
+    };
+    return (
+      <div className="fs">
+        <StepHead person={tester} title="Test the fix on staging" />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} />
+        {stagingCard}
+        <fieldset className="fs-choice">
+          <legend>Does the fix work?</legend>
+          <div className="fs-choice-row">
+            <label className={cx('fs-option', verdict === 'pass' && 'is-picked')}>
+              <input type="radio" name="fs-verdict" checked={verdict === 'pass'} onChange={() => setVerdict('pass')} />
+              <span>
+                <strong>Yes, it works</strong>
+                <span>{first(dev, 'The developer')} prepares the release for {first(reporter, 'the client')}.</span>
+              </span>
+            </label>
+            <label className={cx('fs-option', verdict === 'fail' && 'is-picked')}>
+              <input type="radio" name="fs-verdict" checked={verdict === 'fail'} onChange={() => setVerdict('fail')} />
+              <span>
+                <strong>No, it still fails</strong>
+                <span>It goes back to {first(dev, 'the developer')}, and the AI rewrites the fix from your notes.</span>
+              </span>
+            </label>
+          </div>
+          {verdict && (
+            <div className="fs-notes-field">
+            <Field
+              label={verdict === 'pass' ? 'Release notes' : 'What still goes wrong'}
+              htmlFor="fs-test-note"
+              hint={verdict === 'pass' ? `${first(reporter, 'The client')} gets this as the release notes, with any screenshots or recordings you attach.` : `${first(dev, 'The developer')} and the AI work from this.`}
+              error={tried ? failError : ''}
+            >
+              <RichInput
+                id="fs-test-note"
+                value={testNote}
+                onChange={setTestNote}
+                files={testProof}
+                onFilesChange={setTestProof}
+                invalid={tried && !!failError}
+                placeholder={verdict === 'pass' ? 'What we fixed, and how you checked it on staging. Or generate a draft with AI.' : 'Still blank on Safari on iPhone; desktop works.'}
+                autoFocus
+                tools={
+                  verdict === 'pass' && (
+                    <button type="button" className={cx('fs-generate', generating && 'is-working')} onClick={generate} disabled={generating}>
+                      <span className="ai-ring" aria-hidden />
+                      {generating ? 'Writing…' : testNote.trim() ? 'Regenerate with AI' : 'Generate with AI'}
+                    </button>
+                  )
+                }
+              />
+            </Field>
+            </div>
+          )}
+        </fieldset>
+        <StepBar
+          next={
+            !verdict ? (
+              'Answer “Does the fix work?” above to go on.'
+            ) : verdict === 'pass' ? (
+              <>
+                Next, <strong>{first(dev, 'the developer')}</strong> checks the container registry and sends your release notes to {first(reporter, 'the client')}.
+              </>
+            ) : (
+              <>
+                It goes back to <strong>{first(dev, 'the developer')}</strong>, with your notes.
+              </>
+            )
+          }
+        >
+          <Button variant="primary" disabled={!verdict} onClick={submit}>
+            {verdict === 'fail' ? `Send back to ${first(dev, 'the developer')}` : 'Passed'}
+          </Button>
+        </StepBar>
+      </div>
+    );
+  }
+
+  if (step === 'release') {
+    // Moved here from the menu without a test result: it still goes out, with the notes left empty.
+    const result = ticket.testResult ?? { at: ticket.updatedAt, by: { type: 'system' as const }, note: '', proof: [] };
+    const built = fix ?? codeFixOf(ticket);
+    const builtAt = built.stagedAt ?? result.at;
+    const image = tag ?? imageTagOf(built.repo, ticket.id, builtAt);
+    const tagError = image.trim() && !/^[\w./-]+:[\w.-]+$/.test(image.trim()) ? 'Use the image’s full name and tag, like repo/name:tag.' : '';
+    const notesText = result.note || releaseNotesOf(ticket, asset?.name ?? 'the asset', '');
+    return (
+      <div className="fs">
+        <StepHead person={dev} title="Check the container registry and send it" />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} compact />
+        <section className="fs-plain" aria-labelledby="fs-release-title">
+          <h3 id="fs-release-title" className="fs-plain-title">
+            Release
+          </h3>
+          <dl className="rca-fields rca-form">
+            <div>
+              <dt>
+                Container registry<small>Built from the approved fix</small>
+              </dt>
+              <dd>
+                <label htmlFor="fs-tag" className="sr-only">
+                  Container registry image
+                </label>
+                <input id="fs-tag" className={cx('input fs-tag-input', tagError && 'is-invalid')} value={image} spellCheck={false} onChange={(e) => setTag(e.target.value)} />
+                <span className={cx('fix-changed-line', tagError && 'is-error')}>
+                  {tagError || (
+                    <>
+                      Built from <code>{built.branch}</code>
+                      {built.stagedAt ? `, ${fmtDateTime(built.stagedAt)}` : ''}. Change it if you rebuilt.
+                    </>
+                  )}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>
+                The fix<small>What changed</small>
+              </dt>
+              <dd>
+                {built.summary}
+                <span className="fix-changed-line">
+                  {built.files.length} {built.files.length === 1 ? 'file' : 'files'} changed <span className="fix-plus">+{countLines(built).add}</span> <span className="fix-minus">−{countLines(built).del}</span>
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Release notes<small>From {first(tester, 'QA')}</small>
+              </dt>
+              <dd>{notesText}</dd>
+            </div>
+            <div>
+              <dt>
+                Proof<small>From testing</small>
+              </dt>
+              <dd>{result.proof.length > 0 ? <Attachments files={result.proof} /> : <span className="muted">None attached.</span>}</dd>
+            </div>
+          </dl>
+        </section>
+        <StepBar
+          next={
+            <>
+              <strong>{first(reporter, 'The client')}</strong> gets the release notes and proof to approve the deploy.
+            </>
+          }
+        >
+          <Button variant="primary" disabled={!image.trim() || !!tagError} onClick={() => changeStatus(ticket.id, 'ready_to_deploy', { handoff: { note: notesText, attachments: result.proof, imageTag: image.trim() } })}>
+            Send to {first(reporter, 'the client')}
+          </Button>
+        </StepBar>
+      </div>
+    );
+  }
+
+  if (step === 'deploy') {
+    const sent = ticket.handoffs[ticket.handoffs.length - 1];
+    const last = ticket.feedback[ticket.feedback.length - 1];
+    const approved = last?.decision === 'approved' && (!sent || last.at >= sent.at) ? last : undefined;
+    return (
+      <div className="fs">
+        <StepHead person={approved ? dev : reporter} title={approved ? 'Deploy the fix' : `Waiting for ${first(reporter, 'the client')} to approve the deploy`} />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} compact />
+        <section className="fs-plain" aria-labelledby="fs-sent-title">
+          <h3 id="fs-sent-title" className="fs-plain-title">
+            Sent to {first(reporter, 'the client')}
+          </h3>
+          <dl className="rca-fields rca-form">
+            {sent?.imageTag && (
+              <div>
+                <dt>
+                  Container registry<small>The image that goes live</small>
+                </dt>
+                <dd>
+                  <code className="fix-tag">{sent.imageTag}</code>
+                </dd>
+              </div>
+            )}
+            {sent?.note && (
+              <div>
+                <dt>
+                  Release notes<small>Proof it’s fixed</small>
+                </dt>
+                <dd>{sent.note}</dd>
+              </div>
+            )}
+            {sent && sent.attachments.length > 0 && (
+              <div>
+                <dt>
+                  Proof<small>From testing</small>
+                </dt>
+                <dd>
+                  <Attachments files={sent.attachments} />
+                </dd>
+              </div>
+            )}
+            <div>
+              <dt>
+                Approval<small>From the client</small>
+              </dt>
+              <dd>{approved ? `Approved by ${reporterName(approved.by)}, ${fmtDateTime(approved.at)}` : `Not yet. Sent ${sent ? fmtRelative(sent.at, now).toLowerCase() : ''}`}</dd>
+            </div>
+          </dl>
+        </section>
+        <StepBar
+          next={
+            approved ? (
+              <>
+                Put <code className="fix-tag">{sent?.imageTag ?? 'the image'}</code> live, then mark it deployed.
+              </>
+            ) : (
+              <>
+                <strong>{first(reporter, 'The client')}</strong> approves it in the Client Portal first.
+              </>
+            )
+          }
+        >
+          <Button variant="primary" disabled={!approved} onClick={() => changeStatus(ticket.id, 'resolved')}>
+            Mark as deployed
+          </Button>
+        </StepBar>
+      </div>
+    );
+  }
+
+  if (step === 'done') {
+    const recurring = analysis.similar.length > 0;
+    const plan = fullRcaPlan(ticket, ticket.recurring ?? recurring);
+    const sentRca = plan.due != null && plan.due <= now;
+    const deployedBy = [...ticket.activity].reverse().find((a) => a.kind === 'resolution');
+    return (
+      <div className="fs">
+        <StepHead title="Fixed and live" />
+        <ReportBlock key={step} ticket={ticket} compact />
+        <section className="fs-plain" aria-labelledby="fs-done-title">
+          <h3 id="fs-done-title" className="fs-plain-title">
+            Resolved
+          </h3>
+          <dl className="rca-fields rca-form">
+            <div>
+              <dt>
+                Deployed<small>Live for the client</small>
+              </dt>
+              <dd>{ticket.resolvedAt ? `${deployedBy ? actorName(deployedBy.actor) : 'NXS'}, ${fmtDateTime(ticket.resolvedAt)}` : '—'}</dd>
+            </div>
+            <div>
+              <dt>
+                Full RCA<small>From the SLA</small>
+              </dt>
+              <dd>
+                {plan.due != null ? (sentRca ? `Sent to ${first(reporter, 'the client')} on ${fmtDateTime(plan.due)}.` : `Goes to ${first(reporter, 'the client')} on ${fmtDateTime(plan.due)}.`) : 'Not needed for this ticket.'}
+                <span className="fix-changed-line">
+                  {plan.why}
+                  {plan.due != null && ' The AI builds it from this ticket’s history; nobody needs to write it.'}
+                </span>
+                {ticket.severity === 'medium' && (
+                  <button type="button" className="link-btn fs-rca-flag" onClick={() => setSecurityIssue(ticket.id, !ticket.securityIssue)}>
+                    {ticket.securityIssue ? 'It wasn’t a security or data issue' : 'It was a security or data issue'}
+                  </button>
+                )}
+                {sentRca && (
+                  <a className="link-btn fs-rca-flag" href={`/report/${ticket.id}`} target="_blank" rel="noopener noreferrer">
+                    View the full RCA
+                  </a>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+    );
+  }
+
+  if (step === 'fix') {
+    // Sent back from testing: what QA found goes to the AI as the reason for the next attempt.
+    const back = [...ticket.moveNotes].reverse().find((m) => m.to === 'in_progress' && (m.from === 'on_testing' || m.from === 'qa_passed' || m.from === 'waiting_testing' || m.from === 'ready_to_deploy'));
+    return (
+      <div className="fs">
+        <StepHead person={dev} title={back ? 'Review the AI’s new fix' : 'Review the AI’s fix'} />
+        <StageBanner ticket={ticket} />
+        <ReportBlock key={step} ticket={ticket} compact />
+        <AiCard id="fs-fix-title" title="Code fix" working={!coding.done || rewriting} note={back ? `Rewritten for what ${first(tester, 'QA')} found in testing. Tell the AI what to change below.` : 'Written from the initial RCA. Tell the AI what to change below.'}>
+          {coding.done ? (
+            <div className="ns-fade">
+              <FixByAi ticket={ticket} onBusy={setRewriting} />
+            </div>
+          ) : (
+            <AiWorking lines={back ? [`Reading ${first(tester, 'QA')}’s notes from testing`, 'Finding what the last fix missed', 'Rewriting the fix'] : ['Reading the initial RCA', `Finding the code behind it in ${asset?.name ?? 'the asset'}`, 'Writing the fix']} line={coding.line} />
+          )}
+        </AiCard>
+        {coding.done && (
+          <StepBar
+            next={
+              <>
+                It goes on staging, and <strong>{first(tester, 'QA')}</strong> tests it there.
+              </>
+            }
+          >
+            <Button variant="primary" disabled={rewriting} onClick={() => approveFix(ticket.id)}>
+              Approve and put on staging
+            </Button>
+          </StepBar>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fs">
+      <StepHead person={dev} title="Review and send the initial RCA" />
+      <StageBanner ticket={ticket} />
+      <ReportBlock key={step} ticket={ticket} compact />
+      <AiCard id="fs-rca-title" title="Initial RCA" working={!drafting.done || rewriting} note="Tell the AI what to change below; it rewrites the draft for you.">
+        {drafting.done ? (
+          <div className="ns-fade">
+            <RcaByAi ticket={ticket} analysis={analysis} onBusy={setRewriting} />
+          </div>
+        ) : (
+          <AiWorking lines={[`Reading the report and ${first(tester, 'QA')}’s check`, 'Finding the likely cause', 'Drafting the RCA']} line={drafting.line} />
+        )}
+      </AiCard>
+      {drafting.done && (
+        <StepBar
+          next={
+            <>
+              <strong>{first(reporter, 'The client')}</strong> sees it in the Client Portal. Then you fix it and send it to testing.
+            </>
+          }
+        >
+          <Button variant="primary" disabled={rewriting} onClick={() => sendInitialRca(ticket.id)}>
+            Send RCA to {first(reporter, 'the client')}
+          </Button>
+        </StepBar>
+      )}
+    </div>
+  );
+}
+
+function NextStep({ ticket }: { ticket: Ticket; analysis: Analysis; onAsk: () => void }) {
+  const { slaOf, assetOf, memberOf, reporterOf, currentUser, changeStatus, can, now } = useStore();
   const sla = slaOf(ticket);
   const status = ticket.status;
-  const replied = !!ticket.initialResponse;
   const asset = assetOf(ticket.assetId);
   const reporter = reporterOf(ticket);
   const dev = memberOf(ticket.assigneeId);
   const tester = memberOf(ticket.testerId);
-  const step = status === 'new' ? (replied ? 'rca' : 'reply') : status;
-  const analysing = useAiWork(`read:${ticket.id}`, 2400, step === 'reply');
-  const drafting = useAiWork(`rca:${ticket.id}`, 1800, step === 'rca');
+  const step = status;
   if (status === 'resolved' || status === 'canceled' || !can('ticket.update')) return null;
-  const plan = ticket.plan ?? {};
+  const first = (m?: { name: string } | null, or = 'the team') => m?.name.split(' ')[0] ?? or;
   const mine = (id: string | null) => id === currentUser.id;
+  // Nothing is locked: anyone can take a step, and the header says whose it is.
+  const whose = (id: string | null, m?: { name: string } | null) => (mine(id) ? 'Now with you' : `Now with ${first(m)}`);
   const fixDue = `Fix due ${fmtDateTime(sla.resolution.due)}`;
   const every = ticket.severity === 'critical' ? 'every hour' : ticket.severity === 'medium' ? 'every 4 hours' : 'when it is fixed';
 
-  // Where the two New steps stand, ticked as they go.
-  const newSteps = step === 'reply' || step === 'rca' ? (
-    <ol className="ns-progress" aria-label="Steps while New">
-      <li className={cx(replied ? 'is-done' : 'is-now')}>
-        {replied ? <Check size={13} aria-hidden /> : <span>1</span>}
-        Initial response
-        {replied && <em>sent {fmtTime(ticket.initialResponse!.at)}{ticket.initialResponse!.at <= sla.firstResponse.due ? ', on time' : ''}</em>}
-      </li>
-      <li className={cx(replied ? 'is-now' : 'is-later')}>
-        <span>2</span>
-        Initial RCA and assign
-      </li>
-    </ol>
-  ) : null;
-
   let title = '';
+  let kicker = '';
   let due: ReactNode = null;
   let body: ReactNode = null;
   let actions: ReactNode = null;
 
-  if (step === 'reply') {
-    title = 'Send the initial response';
-    due = <DueLine clock={sla.firstResponse} />;
-    const text = reply ?? responseDraftFor(ticket);
-    body = !analysing.done ? (
-      <AiWorking lines={[`Reading ${reporter?.name.split(' ')[0] ?? 'the client'}’s report`, `Checking ${asset?.name ?? 'the asset'} and earlier tickets`, 'Drafting your reply']} line={analysing.line} />
-    ) : (
-      <div className="ns-fade">
-        <div className="ns-found">
-          <p className="ns-label">
-            <Sparkles size={14} aria-hidden /> What the AI found
-          </p>
-          <p className="ns-text">{analysis.problem}</p>
-          <div className="ns-facts">
-            <span className="muted">Priority</span>
-            <BadgeSelect<Severity> id="ns-priority" label="Priority" value={ticket.severity ?? undefined} options={SEVERITIES.map((v) => ({ value: v, label: SEVERITY_LABEL[v], tone: SEVERITY_TONE[v] }))} onChange={(v) => setSeverity(ticket.id, v)} />
-            <span className="muted">{reply === null ? 'The reply below tells the client this. Change it and the reply follows.' : 'The reply below tells the client this.'}</span>
-          </div>
-        </div>
-        <label className="ns-label" htmlFor="ns-reply">
-          Your reply to {reporter?.name.split(' ')[0] ?? 'the client'}
-        </label>
-        <TextArea
-          id="ns-reply"
-          rows={5}
-          value={text}
-          onChange={(e) => setReply(e.target.value)}
-          onBlur={() => reply != null && saveResponseDraft(ticket.id, reply)}
-        />
-      </div>
-    );
-    actions = analysing.done && (
-      <>
-        <Button variant="secondary" onClick={onAsk}>
-          <MessageSquare size={15} aria-hidden />
-          Ask AI about this report
-        </Button>
-        <Button
-          variant="primary"
-          onClick={() => {
-            if (reply != null) saveResponseDraft(ticket.id, reply);
-            sendInitialResponse(ticket.id);
-            setReply(null);
-          }}
-        >
-          <Send size={15} aria-hidden />
-          Send initial response
-        </Button>
-      </>
-    );
-  } else if (step === 'rca') {
-    title = 'Send the initial RCA and assign';
-    due = <DueLine clock={sla.initialRca} />;
-    body = !drafting.done ? (
-      <AiWorking lines={['Reading the report and your reply', 'Finding the likely cause', 'Drafting the RCA']} line={drafting.line} />
-    ) : (
-      <div className="ns-fade">
-        <InitialRca ticket={ticket} analysis={analysis} embedded />
-        <div className="ns-facts ns-assign">
-          <span className="muted">Goes to</span>
-          <AssignMenu ticket={ticket} id="ns-assign" />
-          <span className="muted">as</span>
-          <BadgeSelect<TaskType> id="ns-task" label="Task type" value={plan.taskType} options={TASK_TYPES.map((x) => ({ value: x, label: TASK_TYPE_LABEL[x], tone: TASK_TONE[x] }))} onChange={(v) => planTicket(ticket.id, { taskType: v })} />
-        </div>
-      </div>
-    );
-    actions = drafting.done && (
-      <>
-        <Button variant="secondary" onClick={onAsk}>
-          <MessageSquare size={15} aria-hidden />
-          Ask AI about the cause
-        </Button>
-        <Button variant="primary" onClick={() => confirmTriage(ticket.id)}>
-          <Send size={15} aria-hidden />
-          Send RCA and assign {dev?.name.split(' ')[0] ?? ''}
-        </Button>
-      </>
-    );
-  } else if (step === 'in_progress') {
-    title = mine(ticket.assigneeId) ? 'Fix it and send it to testing' : `With ${dev?.name.split(' ')[0] ?? 'the team'} now`;
+  if (step === 'in_progress') {
+    title = 'Fix it and send it to testing';
+    kicker = whose(ticket.assigneeId, dev);
     due = <span className="rca-due">{fixDue}</span>;
     body = (
       <p className="ns-text">
-        {mine(ticket.assigneeId) ? 'The cause and the fix are in the RCA below.' : `Nothing for you until the fix reaches testing.`} The client hears from us {every} while it’s being fixed; the AI sends those updates.
+        The cause and the fix are in the initial RCA, under “Sent to” on the right. The client hears from us {every} while it’s being fixed; the AI sends those updates.
       </p>
     );
-    actions = mine(ticket.assigneeId) && (
+    actions = (
       <Button variant="primary" onClick={() => changeStatus(ticket.id, 'waiting_testing')}>
         Send to testing
-        <ArrowRight size={15} aria-hidden />
-      </Button>
-    );
-  } else if (step === 'blocked') {
-    title = 'Blocked';
-    body = <p className="ns-text">The reason is above. Once it’s cleared, unblock it and the work carries on.</p>;
-    actions = (
-      <Button variant="primary" onClick={() => setDialog({ type: 'unblock', ticketId: ticket.id })}>
-        Unblock
       </Button>
     );
   } else if (step === 'waiting_testing') {
-    title = mine(ticket.testerId) ? 'Start testing the fix' : `Waiting for ${tester?.name.split(' ')[0] ?? 'QA'} to test it`;
+    title = 'Start testing the fix';
+    kicker = whose(ticket.testerId, tester);
     due = <DueLine clock={sla.resolution} />;
     body = <p className="ns-text">{dev?.name.split(' ')[0] ?? 'The developer'} has finished the fix. The client has been told it is in testing.</p>;
-    actions = mine(ticket.testerId) && (
+    actions = (
       <Button variant="primary" onClick={() => changeStatus(ticket.id, 'on_testing')}>
         Start testing
-        <ArrowRight size={15} aria-hidden />
       </Button>
     );
   } else if (step === 'on_testing') {
     title = 'Test the fix, then send it to deploy';
+    kicker = whose(ticket.testerId, tester);
     due = <DueLine clock={sla.resolution} />;
     const checks = (ticket.diagnosis?.fix ?? '').split(/(?<=[.!?])\s+/).filter(Boolean);
     body = (
@@ -704,15 +1603,9 @@ function NextStep({ ticket, analysis, onAsk }: { ticket: Ticket; analysis: Analy
       </div>
     );
     actions = (
-      <>
-        <Button variant="secondary" onClick={() => changeStatus(ticket.id, 'in_progress')}>
-          Send back to {dev?.name.split(' ')[0] ?? 'the developer'}
-        </Button>
-        <Button variant="primary" onClick={() => changeStatus(ticket.id, 'ready_to_deploy')}>
-          Passed: send to deploy
-          <ArrowRight size={15} aria-hidden />
-        </Button>
-      </>
+      <Button variant="primary" onClick={() => changeStatus(ticket.id, 'ready_to_deploy')}>
+        Passed: send to deploy
+      </Button>
     );
   } else if (step === 'ready_to_deploy') {
     const sent = ticket.handoffs[ticket.handoffs.length - 1];
@@ -722,10 +1615,9 @@ function NextStep({ ticket, analysis, onAsk }: { ticket: Ticket; analysis: Analy
 
   return (
     <section className={cx('ns', `is-${step}`)} aria-labelledby="ns-title" key={step}>
-      {newSteps}
       <header className="ns-head">
         <div>
-          <p className="ns-kicker">{actions ? 'Your next step' : 'Now'}</p>
+          <p className="ns-kicker">{actions ? kicker || 'Your next step' : 'Now'}</p>
           <h2 id="ns-title" className="ns-title">
             {title}
           </h2>
@@ -743,28 +1635,27 @@ function NextStep({ ticket, analysis, onAsk }: { ticket: Ticket; analysis: Analy
    the fix. QA checks it and sends it by confirming the ticket (T+3). For P1,
    the time to fix is set here; P2 and P3 follow the SLA. */
 
-function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; analysis: Analysis; onAsk?: () => void; embedded?: boolean }) {
+function InitialRca({ ticket, analysis, onAsk, embedded, changed, rewriting }: { ticket: Ticket; analysis: Analysis; onAsk?: () => void; embedded?: boolean; /** Parts the AI just rewrote, marked for a moment. */ changed?: RcaPart[]; /** Parts the AI is rewriting now. */ rewriting?: RcaPart[] }) {
   const { saveInitialRca, saveRcaDraft, slaOf, can } = useStore();
   const shared = ticket.diagnosis;
   const draft = ticket.rcaDraft ?? analysis;
   const shown = shared ?? draft;
   const shownProblem = shown.problem ?? analysis.problem;
-  // Only QA edits it, while checking the AI's read in New. Once confirmed it is what the client was sent:
+  // The developer edits the AI's draft until it's sent. Once sent it is what the client has:
   // later findings go in the comments, not back into this.
-  const canEdit = ticket.status === 'new' && can('ticket.update');
+  // In the step the draft is changed by asking the AI, so there is no Edit there.
+  const canEdit = !embedded && !shared && isOpen(ticket) && can('ticket.update');
+  const mark = (part: RcaPart) => (rewriting?.includes(part) ? 'is-rewriting' : changed?.includes(part) ? 'is-changed' : undefined);
   const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState('');
   const [issue, setIssue] = useState('');
   const [fix, setFix] = useState('');
-  const [hours, setHours] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const critical = ticket.severity === 'critical';
   const sla = slaOf(ticket);
   const open = () => {
     setProblem(shownProblem);
     setIssue(shown.issue);
     setFix(shown.fix);
-    setHours(String(shared?.fixBy ? Math.round((shared.fixBy - ticket.createdAt) / HOUR_MS) : (ticket.rcaDraft?.hours ?? analysis.hours)));
     setSubmitted(false);
     setEditing(true);
   };
@@ -772,15 +1663,13 @@ function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; ana
     problem: problem.trim().length < 10 ? 'Say what the issue is.' : '',
     issue: issue.trim().length < 10 ? 'Say what is causing it.' : '',
     fix: fix.trim().length < 10 ? 'Say how it will be fixed.' : '',
-    hours: critical && !(Number(hours) > 0) ? 'Set the hours to fix.' : '',
   };
   const save = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (errors.problem || errors.issue || errors.fix || errors.hours) return;
-    const h = critical ? Number(hours) : undefined;
-    if (shared) saveInitialRca(ticket.id, { problem, issue, fix, fixBy: h ? ticket.createdAt + h * HOUR_MS : shared.fixBy });
-    else saveRcaDraft(ticket.id, { problem, issue, fix, hours: h });
+    if (errors.problem || errors.issue || errors.fix) return;
+    if (shared) saveInitialRca(ticket.id, { problem, issue, fix, fixBy: shared.fixBy });
+    else saveRcaDraft(ticket.id, { problem, issue, fix });
     setEditing(false);
   };
   /** How long the fix takes, as the client reads it. The target date follows, without a clock time. */
@@ -791,11 +1680,11 @@ function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; ana
     return `${h} ${h === 1 ? 'hour' : 'hours'}`;
   };
   const priority = ticket.severity ? SEVERITY_LABEL[ticket.severity] : 'this priority';
-  const draftHours = !shared && critical ? (ticket.rcaDraft?.hours ?? analysis.hours) : null;
-  const fixDue = draftHours ? ticket.createdAt + draftHours * HOUR_MS : sla.resolution.due;
+  // Time to fix follows the priority's SLA; it isn't set here.
+  const fixDue = sla.resolution.due;
   const shownFix = {
     within: `Within ${span(fixDue - ticket.createdAt)}`,
-    note: `${priority}${critical ? ', set in this RCA' : ''}, by ${fmtDateYear(fixDue)}`,
+    note: `From the SLA for ${priority}, by ${fmtDateTime(fixDue)}`,
   };
   const actions = !editing && (canEdit || onAsk) && (
     <div className="rca-head-actions">
@@ -817,17 +1706,12 @@ function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; ana
   return (
     <div className="rca-block" role="group" aria-labelledby="rca-initial">
       <header className={cx('rca-head', embedded && 'is-embedded')}>
-        <div>
-          <h3 id="rca-initial" className={cx('rca-title', embedded && 'sr-only')}>
+        <div className={embedded ? 'sr-only' : undefined}>
+          <h3 id="rca-initial" className="rca-title">
             Initial RCA
             {!shared && <Badge tone="purple">AI draft</Badge>}
           </h3>
-          {embedded && (
-            <p className="ns-label">
-              <Sparkles size={14} aria-hidden /> Drafted by AI from the report. Check the cause before you send it.
-            </p>
-          )}
-          <p className={cx('rca-sub', embedded && 'sr-only')}>
+          <p className="rca-sub">
             {shared ? (
               <DueLine clock={sla.initialRca} sentAt={shared.at} />
             ) : (
@@ -851,13 +1735,7 @@ function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; ana
           <Field label="How it will be fixed" htmlFor="rca-fix" error={submitted ? errors.fix : ''}>
             <TextArea id="rca-fix" rows={3} value={fix} onChange={(e) => setFix(e.target.value)} />
           </Field>
-          {critical ? (
-            <Field label="Time to fix, in hours" htmlFor="rca-hours" hint="For P1 the fix deadline comes from this analysis." error={submitted ? errors.hours : ''}>
-              <input id="rca-hours" className="input rca-hours" type="number" min={1} step={1} value={hours} onChange={(e) => setHours(e.target.value)} />
-            </Field>
-          ) : (
-            <p className="fix-preview">Time to fix follows the priority in the ticket’s properties.</p>
-          )}
+          <p className="fix-preview">Time to fix follows the priority’s SLA.</p>
           <div className="rca-actions">
             <Button
               variant="secondary"
@@ -882,21 +1760,31 @@ function InitialRca({ ticket, analysis, onAsk, embedded }: { ticket: Ticket; ana
           </div>
         </form>
       ) : (
-        <dl className="rca-fields">
+        // A filled-in form: labels (with what each part answers) on the left, the AI's words on the right.
+        // Read-only on purpose: the words change by asking the AI, never by typing here.
+        <dl className="rca-fields rca-form">
           <div>
-            <dt>Issue</dt>
-            <dd>{shownProblem}</dd>
+            <dt>
+              Issue<small>What happens</small>
+            </dt>
+            <dd className={mark('problem')}>{shownProblem}</dd>
           </div>
           <div>
-            <dt>Cause</dt>
-            <dd>{shown.issue}</dd>
+            <dt>
+              Cause<small>Why it happens</small>
+            </dt>
+            <dd className={mark('issue')}>{shown.issue}</dd>
           </div>
           <div>
-            <dt>How it will be fixed</dt>
-            <dd>{shown.fix}</dd>
+            <dt>
+              How it will be fixed<small>What we’ll do</small>
+            </dt>
+            <dd className={mark('fix')}>{shown.fix}</dd>
           </div>
           <div>
-            <dt>Time to fix</dt>
+            <dt>
+              Time to fix<small>Set by the SLA</small>
+            </dt>
             <dd className="fix-when">
               <strong>{shownFix.within}</strong>
               <span className="muted">{shownFix.note}</span>
@@ -1025,15 +1913,53 @@ function CommentsPanel({ ticket }: { ticket: Ticket }) {
   const { addComment, actorName, memberOf, clientOf, team, now } = useStore();
   const [thread, setThread] = useState<'client' | 'internal'>('client');
   const [text, setText] = useState('');
+  // Replying under one part of the client's timeline, so the answer shows up there in the portal.
+  const [replyTo, setReplyTo] = useState<CommentOn | null>(null);
   const list = ticket.comments.filter((c) => c.thread === thread);
+  /** What a client comment replied to, as they see it on their timeline. */
+  const onLabel = (on?: CommentOn) => {
+    if (!on) return null;
+    if (on.kind === 'rca') return 'Initial analysis (RCA)';
+    const h = ticket.handoffs.find((x) => x.id === on.id);
+    return h ? `The fix sent ${fmtDateTime(h.at)}` : 'The fix';
+  };
   // Who can be mentioned: the team on the internal thread, the client's own people on the client thread.
   const people = thread === 'internal' ? team.map((m) => ({ id: m.id, name: m.name, title: m.title, photo: m.photo })) : (clientOf(ticket.clientId)?.users ?? []).map((u) => ({ id: u.id, name: u.name, title: u.title, photo: undefined }));
   const send = () => {
     if (!text.trim()) return;
-    addComment(ticket.id, thread, text);
+    addComment(ticket.id, thread, text, undefined, thread === 'client' ? (replyTo ?? undefined) : undefined);
     setText('');
+    setReplyTo(null);
   };
   const count = (t: 'client' | 'internal') => ticket.comments.filter((c) => c.thread === t).length;
+  const keyOf = (on?: CommentOn) => (on ? (on.kind === 'rca' ? 'rca' : `release-${on.id}`) : 'rca');
+  const replyKey = replyTo ? keyOf(replyTo) : null;
+  // The client thread, grouped by what each reply is on, in the order the parts were first replied to.
+  const groups = (() => {
+    const by = new Map<string, { key: string; on: CommentOn; items: typeof list }>();
+    for (const c of thread === 'client' ? [...list].sort((x, y) => x.at - y.at) : []) {
+      const k = keyOf(c.on);
+      if (!by.has(k)) by.set(k, { key: k, on: c.on ?? { kind: 'rca' }, items: [] });
+      by.get(k)!.items.push(c);
+    }
+    return [...by.values()];
+  })();
+  const row = (c: (typeof list)[number]) => {
+    const name = actorName(c.by);
+    return (
+      <li key={c.id} className={cx('comment', c.by.type !== 'client' && 'is-nxs')}>
+        <Avatar name={name} size={28} src={c.by.type === 'team' ? memberOf(c.by.id)?.photo : undefined} />
+        <div className="comment-body">
+          <p className="comment-meta">
+            <span className="comment-name">{name}</span>
+            {c.by.type === 'client' && <span className="comment-who">Client</span>}
+            <time title={fmtDateTime(c.at)}>{fmtRelative(c.at, now)}</time>
+          </p>
+          <p className="comment-text">{withMentions(c.text, people.map((x) => x.name))}</p>
+        </div>
+      </li>
+    );
+  };
   return (
     <div className="comments">
       <div className="view-tabs comments-threads" role="tablist" aria-label="Comment thread">
@@ -1052,41 +1978,48 @@ function CommentsPanel({ ticket }: { ticket: Ticket }) {
       </div>
       <p className="comments-hint">
         {thread === 'client'
-          ? 'Shared with the client. Their team reads it in the Client Portal and can reply here.'
+          ? 'The client comments under the initial RCA and the fix in the Client Portal. Comment back on one and they see it there, under the same part.'
           : 'Only the NXS team sees this thread. Nothing here reaches the client.'}
       </p>
 
-      {list.length > 0 ? (
-        <ol className="comment-list">
-          {list.map((c) => {
-            const name = actorName(c.by);
-            return (
-              <li key={c.id} className="comment">
-                <Avatar name={name} size={28} src={c.by.type === 'team' ? memberOf(c.by.id)?.photo : undefined} />
-                <div className="comment-body">
-                  <p className="comment-meta">
-                    <span className="comment-name">{name}</span>
-                    <time title={fmtDateTime(c.at)}>{fmtRelative(c.at, now)}</time>
-                  </p>
-                  <p className="comment-text">{withMentions(c.text, people.map((x) => x.name))}</p>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+      {thread === 'client' ? (
+        // One group per part of the client's timeline, its replies in order, and the reply box under it.
+        groups.length > 0 ? (
+          <div className="comment-groups">
+            {groups.map((g) => (
+              <section key={g.key} className="comment-group" aria-label={`Comments on ${onLabel(g.on)}`}>
+                <p className="comment-group-head">
+                  On <strong>{onLabel(g.on)}</strong>
+                  <span className="muted">
+                    {g.items.length} {g.items.length === 1 ? 'comment' : 'comments'}
+                  </span>
+                </p>
+                <ol className="comment-list is-thread">{g.items.map(row)}</ol>
+                {replyKey === g.key ? (
+                  <div className="comment-group-reply">
+                    <CommentBox key={g.key} value={text} onChange={setText} onSend={send} people={people} label="Comment to the client" placeholder="Write a comment to the client… They see it under the same part. Type @ to mention someone." />
+                    <button type="button" className="link-btn" onClick={() => setReplyTo(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" className="pt-reply-open comment-group-open" onClick={() => setReplyTo(g.on)}>
+                    <MessageSquare size={15} aria-hidden />
+                    Comment
+                  </button>
+                )}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <p className="comments-empty">No comments from the client yet. They can comment under the initial RCA and under the fix in the Client Portal.</p>
+        )
       ) : (
-        <p className="comments-empty">No comments yet.</p>
+        <>
+          {list.length > 0 ? <ol className="comment-list">{list.map(row)}</ol> : <p className="comments-empty">No comments yet.</p>}
+          <CommentBox key="internal" value={text} onChange={setText} onSend={send} people={people} label="Internal comment" placeholder="Write a note for the team… Type @ to mention someone." />
+        </>
       )}
-
-      <CommentBox
-        key={thread}
-        value={text}
-        onChange={setText}
-        onSend={send}
-        people={people}
-        label={thread === 'client' ? 'Comment to the client' : 'Internal comment'}
-        placeholder={thread === 'client' ? 'Write to the client… Type @ to mention someone.' : 'Write a note for the team… Type @ to mention someone.'}
-      />
     </div>
   );
 }
@@ -1101,7 +2034,10 @@ const TASK_TONE: Record<TaskType, Tone> = { frontend: 'blue', backend: 'green' }
  * fills them in when the ticket comes in; a sparkle marks a value QA hasn't
  * changed yet.
  */
-function TicketAside({ ticket }: { ticket: Ticket }) {
+type PropKey = 'priority' | 'assignee' | 'tester' | 'taskType' | 'asset' | 'category' | 'sprint' | 'points' | 'expected';
+
+/** Every property row of a ticket, editable where it may be. `notes` puts a short reason beside a row. */
+function usePropRows(ticket: Ticket, notes: Partial<Record<PropKey, ReactNode>> = {}) {
   const { clientOf, assetOf, assets, reporterOf, planTicket, setSeverity, setCategory, setAsset, slaOf, can, now } = useStore();
   const client = clientOf(ticket.clientId);
   const asset = assetOf(ticket.assetId);
@@ -1118,16 +2054,15 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
     ...sprints.map((x) => ({ value: x.code, label: x.code, tone: 'purple' as Tone, description: `${x.when}, ${fmtDate(x.start)} to ${fmtDate(x.end)}` })),
   ];
   const none = <span className="muted">Not set</span>;
-  // While QA reviews a new ticket, what the AI filled in is grouped at the top.
-  const review = ticket.status === 'new';
   const row = {
     due: running && (
-      <Prop icon={Timer} label={`${clockWord(ticket.status, sla)} due`}>
+      <Prop icon={Timer} label={`${sla.activeLabel === 'Initial RCA' ? 'Initial RCA' : clockWord(ticket.status, sla)} due`} className="prop-deadline">
         <span className={cx('prop-due', `tone-${SLA_TONE[clock.state]}`)}>
-          <span className="prop-due-main">
-            <strong>{clock.due >= now ? `${fmtDuration(clock.due - now)} left` : `${fmtDuration(now - clock.due)} over`}</strong>
+          <strong className="prop-due-left">{clock.due >= now ? `${fmtDuration(clock.due - now)} left` : `${fmtDuration(now - clock.due)} over`}</strong>
+          <span className="prop-due-when">
+            {clock.due >= now ? 'Due' : 'Was due'} {fmtDateTime(clock.due)}
+            {sla.activeLabel === 'Initial RCA' && ' · counts from the report'}
           </span>
-          <span className="prop-meta">{clock.due >= now ? 'By' : 'Was due'} {fmtDateTime(clock.due)}</span>
         </span>
       </Prop>
     ),
@@ -1137,12 +2072,12 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
     assignee: (
-      <Prop icon={User} label="Assigned to">
+      <Prop icon={User} label="Assigned to" note={notes.assignee}>
         <AssignMenu ticket={ticket} id="assign-trigger" />
       </Prop>
     ),
     tester: (
-      <Prop icon={FlaskConical} label="Testing">
+      <Prop icon={FlaskConical} label="Testing" note={notes.tester}>
         <AssignMenu ticket={ticket} id="tester-trigger" role="tester" />
       </Prop>
     ),
@@ -1159,7 +2094,7 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
     priority: (
-      <Prop icon={Signal} label="Priority">
+      <Prop icon={Signal} label="Priority" note={notes.priority}>
         {editable ? (
           <BadgeSelect<Severity> id="prop-priority" label="Priority" value={ticket.severity ?? undefined} options={SEVERITIES.map((v) => ({ value: v, label: SEVERITY_LABEL[v], tone: SEVERITY_TONE[v] }))} onChange={(v) => setSeverity(ticket.id, v)} />
         ) : (
@@ -1168,7 +2103,7 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
     category: (
-      <Prop icon={Tag} label="Category">
+      <Prop icon={Tag} label="Category" note={notes.category}>
         {editable ? (
           <span className="prop-edit">
             <Dropdown<Category> id="prop-category" value={ticket.category} placeholder="Choose" options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABEL[c].replace(' issue', '') }))} onChange={(c) => setCategory(ticket.id, c)} />
@@ -1191,7 +2126,7 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
     asset: (
-      <Prop icon={Boxes} label="Asset" title={asset?.name}>
+      <Prop icon={Boxes} label="Asset" title={asset?.name} note={notes.asset}>
         {editable && client ? (
           <span className="prop-edit">
             <Dropdown id="prop-asset" value={ticket.assetId} placeholder="Choose" options={assets.filter((a) => a.clientId === client.id).map((a) => ({ value: a.id, label: a.name }))} onChange={(v) => setAsset(ticket.id, v)} />
@@ -1202,23 +2137,23 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
     sprint: (
-      <Prop icon={Milestone} label="Sprint plan">
+      <Prop icon={Milestone} label="Sprint plan" note={notes.sprint}>
         {editable ? <BadgeSelect id="plan-sprint" label="Sprint plan" value={plan.sprint} options={sprintOptions} onChange={(v) => set({ sprint: v })} /> : plan.sprint ? <Badge tone="purple">{plan.sprint}</Badge> : none}
       </Prop>
     ),
     taskType: (
-      <Prop icon={Layers} label="Task type">
+      <Prop icon={Layers} label="Task type" note={notes.taskType}>
         {editable ? <BadgeSelect<TaskType> id="plan-type" label="Task type" value={plan.taskType} options={TASK_TYPES.map((x) => ({ value: x, label: TASK_TYPE_LABEL[x], tone: TASK_TONE[x] }))} onChange={(v) => set({ taskType: v })} /> : plan.taskType ? <Badge tone={TASK_TONE[plan.taskType]}>{TASK_TYPE_LABEL[plan.taskType]}</Badge> : none}
       </Prop>
     ),
     points: (
-      <Prop icon={Hash} label="Story points">
+      <Prop icon={Hash} label="Story points" note={notes.points}>
         {editable ? <PointsInput value={plan.storyPoints} onChange={(n) => set({ storyPoints: n })} /> : (plan.storyPoints ?? none)}
       </Prop>
     ),
     // Follows the SLA's fix deadline, so it is read, not set.
     expected: (
-      <Prop icon={CalendarCheck} label="Expected done" title="From the SLA for this priority">
+      <Prop icon={CalendarCheck} label="Expected done" title="From the SLA for this priority" note={notes.expected}>
         {fmtDateYear(sla.resolution.due)}
       </Prop>
     ),
@@ -1233,33 +2168,36 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
       </Prop>
     ),
   };
+  return row;
+}
+
+/** The details beside a ticket: its deadline on top, then everyone and everything on it. */
+function TicketAside({ ticket }: { ticket: Ticket }) {
+  const { clientOf, memberOf } = useStore();
+  const row = usePropRows(ticket);
+  const pm = memberOf(clientOf(ticket.clientId)?.accountManagerId ?? null);
+  // While the PM reviews it, the properties are the page's main content, so here only the who and when.
+  const review = ticket.status === 'new';
 
   if (review)
     return (
       <aside className="ticket-aside" aria-label="Ticket details">
         <dl className="props is-rows is-head">{row.due}</dl>
         <dl className="props is-rows">
-          {row.created}
-          {row.neededBy}
           {row.reporter}
           {row.client}
-          {row.tester}
-          {row.expected}
+          {pm && (
+            <Prop icon={Briefcase} label="PM">
+              <span className="prop-link">
+                <Avatar name={pm.name} size={20} src={pm.photo} />
+                <span className="truncate">{pm.name}</span>
+              </span>
+            </Prop>
+          )}
+          {row.created}
+          {row.neededBy}
         </dl>
-        <section className="ai-group" aria-labelledby="ai-group-title">
-          <p className="ai-group-head" id="ai-group-title">
-            <strong>Suggested by AI</strong> Check before you confirm.
-          </p>
-          <dl className="props is-rows">
-            {row.asset}
-            {row.category}
-            {row.priority}
-            {row.assignee}
-            {row.sprint}
-            {row.points}
-            {row.taskType}
-          </dl>
-        </section>
+        <SentToClient ticket={ticket} />
       </aside>
     );
 
@@ -1285,6 +2223,7 @@ function TicketAside({ ticket }: { ticket: Ticket }) {
         {row.taskType}
         {row.expected}
       </dl>
+      <SentToClient ticket={ticket} />
     </aside>
   );
 }

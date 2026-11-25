@@ -8,29 +8,34 @@ import { Empty } from '../components/ui';
 /*
  * The full RCA as a page of its own, opened in a new tab from the Client
  * Portal: NXS's RCA report template (header, then ten sections), readable by
- * anyone with the link, with the document to download. No sign-in, no app
- * around it.
+ * anyone with the link. No sign-in, no app around it.
+ *
+ * Two shapes only: label and value for anything with two parts, a table for
+ * anything with more. Files sit where they belong: the client's own under the
+ * symptoms, the proof under the resolution.
  */
 
 function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
     <section className="report-section" aria-labelledby={`rs-${n}`}>
       <h2 id={`rs-${n}`} className="report-h2">
-        {n}. {title}
+        <span className="report-h2-n">{n}</span>
+        {title}
       </h2>
       {children}
     </section>
   );
 }
 
-function Table({ head, rows }: { head: string[]; rows: string[][] }) {
+/** A table, for parts with more than two columns. Columns listed in `tight` never wrap. */
+function Table({ head, rows, tight = [] }: { head: string[]; rows: string[][]; tight?: number[] }) {
   return (
     <div className="report-table-wrap">
       <table className="report-table">
         <thead>
           <tr>
-            {head.map((h) => (
-              <th key={h} scope="col">
+            {head.map((h, j) => (
+              <th key={h} scope="col" className={tight.includes(j) ? 'is-tight' : undefined}>
                 {h}
               </th>
             ))}
@@ -40,7 +45,7 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
           {rows.map((r, i) => (
             <tr key={i}>
               {r.map((v, j) => (
-                <td key={j} className={v.startsWith('[To confirm') ? 'is-todo' : undefined}>
+                <td key={j} className={tight.includes(j) ? 'is-tight' : undefined}>
                   {v || '—'}
                 </td>
               ))}
@@ -52,15 +57,17 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
   );
 }
 
-function Points({ rows }: { rows: RcaRow[] }) {
+/** Label and value, the one shape every two-part section of the report uses. */
+function Fields({ rows }: { rows: RcaRow[] }) {
   return (
-    <ul className="report-points">
+    <dl className="report-kv">
       {rows.map(([k, v]) => (
-        <li key={k}>
-          <strong>{k}:</strong> <span className={v.startsWith('[To confirm') ? 'is-todo' : undefined}>{v}</span>
-        </li>
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </div>
       ))}
-    </ul>
+    </dl>
   );
 }
 
@@ -111,59 +118,69 @@ export function ReportPage() {
               </div>
             ))}
           </dl>
-          {handoff && handoff.attachments.length > 0 && (
-            <div className="report-files">
-              <Attachments files={handoff.attachments} />
-            </div>
-          )}
         </header>
 
         <Section n={1} title="Executive Summary">
-          <Points rows={c.summary} />
+          <Fields rows={c.summary} />
         </Section>
+
         <Section n={2} title="Incident Details">
-          <Table head={['Item', 'Details']} rows={c.details} />
+          <Fields rows={c.details} />
         </Section>
+
         <Section n={3} title="Timeline of Events">
-          <Table head={['Time', 'Event', 'Who']} rows={c.timeline} />
+          <Table head={['Time', 'Event', 'Who']} rows={c.timeline} tight={[0, 2]} />
         </Section>
+
         <Section n={4} title="Symptoms and Evidence">
-          <Points rows={c.evidence} />
+          <Fields rows={c.evidence.filter(([k]) => k !== 'Screenshots / attachments')} />
+          {ticket.attachments.length > 0 && (
+            <>
+              <h3 className="report-h3">From the report</h3>
+              <Attachments files={ticket.attachments} />
+            </>
+          )}
         </Section>
+
         <Section n={5} title="Root Cause Analysis">
-          <p className="report-p">
-            <strong>Method used:</strong> {c.method}
-          </p>
-          <Table head={['Level', 'Question', 'Answer']} rows={c.whys} />
-          <p className="report-p report-callout">
-            <strong>Root cause statement:</strong> {c.rootCause}
-          </p>
+          <p className="report-method">Method: {c.method}</p>
+          <Table head={['Level', 'Question', 'Answer']} rows={c.whys} tight={[0]} />
+          <div className="report-callout">
+            <p className="report-callout-label">Root cause</p>
+            <p className="report-callout-text">{c.rootCause}</p>
+          </div>
           <h3 className="report-h3">Contributing factors</h3>
-          <Table head={['Category', 'Findings']} rows={c.factors} />
-          <ul className="report-points">
-            <li>
-              <strong>Went well:</strong> {c.wentWell}
-            </li>
-            <li>
-              <strong>Didn’t go well:</strong> {c.didntGoWell}
-            </li>
-          </ul>
+          <Fields rows={c.factors} />
+          <h3 className="report-h3">Looking back</h3>
+          <Fields
+            rows={[
+              ['Went well', c.wentWell],
+              ['Didn’t go well', c.didntGoWell],
+            ]}
+          />
         </Section>
+
         <Section n={6} title="Resolution">
-          <Points rows={c.resolution} />
-          <p className="report-p">
-            <strong>Steps taken:</strong>
-          </p>
+          <Fields rows={c.resolution} />
+          <h3 className="report-h3">Steps taken</h3>
           <ol className="report-steps">
             {c.steps.map((x) => (
               <li key={x}>{x}</li>
             ))}
           </ol>
+          {handoff && handoff.attachments.length > 0 && (
+            <>
+              <h3 className="report-h3">Proof it’s fixed</h3>
+              <Attachments files={handoff.attachments} />
+            </>
+          )}
         </Section>
+
         <Section n={7} title="Corrective and Preventive Actions">
-          <Table head={['#', 'Action', 'Type', 'Owner', 'Due date', 'Status']} rows={c.actions.map((a, i) => [String(i + 1), a.action, a.type, a.owner, a.due, a.status])} />
-          <p className="report-note">Corrective fixes the issue now, Preventive stops it coming back, Detective spots it sooner, Process changes how the work is done.</p>
+          <Table head={['#', 'Action', 'Type', 'Owner', 'Due', 'Status']} rows={c.actions.map((a, i) => [String(i + 1), a.action, a.type, a.owner, a.due, a.status])} tight={[0, 2, 3, 4, 5]} />
+          <p className="report-note">Corrective fixes the issue now. Preventive stops it coming back. Detective spots it sooner. Process changes how the work is done.</p>
         </Section>
+
         <Section n={8} title="Lessons Learned">
           <ul className="report-points">
             {c.lessons.map((x) => (
@@ -171,11 +188,13 @@ export function ReportPage() {
             ))}
           </ul>
         </Section>
+
         <Section n={9} title="Recurrence Risk">
-          <Table head={['Item', 'Assessment']} rows={c.risk} />
+          <Fields rows={c.risk} />
         </Section>
+
         <Section n={10} title="Sign-off">
-          <Table head={['Role', 'Name', 'Date']} rows={c.signoff} />
+          <Table head={['Role', 'Name', 'Date']} rows={c.signoff} tight={[2]} />
         </Section>
       </main>
     </div>

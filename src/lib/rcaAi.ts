@@ -2,6 +2,7 @@ import type { Asset, FullRcaContent, Ticket } from '../types';
 import { draftDiagnosis, readTicket } from './assist';
 import { fmtDateTime, fmtDuration } from './format';
 import { ASSET_CATEGORY_LABEL } from './domain';
+import { fullRcaPlan, pastTense } from './release';
 
 /*
  * The RCA assistant, simulated: there is no model behind the prototype, so
@@ -85,12 +86,13 @@ export interface RcaContext {
 }
 
 const PRIORITY_SHORT: Record<string, string> = { critical: 'P1 Critical', medium: 'P2 Medium', low: 'P3 Low' };
-const TO_CONFIRM = (what: string) => `[To confirm: ${what}]`;
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+const dateOnly = (ts: number) => fmtDateTime(ts).split(',')[0];
 
 /**
  * The AI's full RCA, kept up to date from the ticket and laid out as the RCA report template.
- * What the ticket can't tell (users affected, error text, recent changes) is left as a marked
- * placeholder for QA to fill in before it goes out.
+ * It only says what the ticket and its history can support: a part it can't know (an exact
+ * error text the client never quoted, a change nobody logged) is left out, not left blank.
  */
 export function fullRcaDraftOf(t: Ticket, ctx: RcaContext): FullRcaContent {
   const assetName = ctx.asset?.name ?? 'the asset';
@@ -102,23 +104,49 @@ export function fullRcaDraftOf(t: Ticket, ctx: RcaContext): FullRcaContent {
   const effect = t.severity ? EFFECT[t.severity] : 'The effect is still being assessed.';
   const firstLine = (t.description.match(/^[^.!?]+[.!?]/)?.[0] ?? t.description).trim();
   const status = t.status === 'resolved' ? 'Resolved' : handoff ? 'Fix ready, waiting for your deploy' : 'Being fixed';
-  const cause = t.diagnosis?.issue ?? (area ? `We traced it to ${where} on ${assetName}, where ${area.cause}.` : TO_CONFIRM('the cause'));
-  const fix = t.diagnosis?.fix ?? TO_CONFIRM('the fix');
+  const why1 = area ? `${cap(area.cause)}.` : `One step in the affected flow on ${assetName} fails for some requests.`;
+  const cause = t.diagnosis?.issue ?? `We traced it to ${where} on ${assetName}: ${why1.charAt(0).toLowerCase()}${why1.slice(1)}`;
+  const fix = t.diagnosis?.fix ?? `Find the step in ${where} that fails, fix it, and test the flow end to end on staging.`;
   const prevention = `We’ll add an automated check and an alert for ${where} on ${assetName}, so this is caught before it reaches you.`;
   const day = 86_400_000;
-  const base = handoff?.at ?? t.updatedAt;
-  const due = (days: number) => fmtDateTime(base + days * day).split(',')[0];
-  const reported = fmtDateTime(t.createdAt);
+  // The report goes out when the SLA times it (P1: five days after it's resolved); before that, it's dated today.
+  const sentAt = t.status === 'resolved' ? (fullRcaPlan(t).due ?? t.resolvedAt ?? t.updatedAt) : (handoff?.at ?? t.updatedAt);
+  const actionsFrom = fixedAt ?? t.updatedAt;
+  const due = (days: number) => dateOnly(actionsFrom + days * day);
+  const quoted = t.description.match(/[“"]([^”"]{3,80})[”"]/)?.[1];
+  const users =
+    t.severity === 'critical'
+      ? `Everyone who used ${where} on ${assetName} from the report until the fix`
+      : t.severity === 'medium'
+        ? `Some of the people who used ${where} on ${assetName} while it lasted`
+        : `A small number of people using ${where} on ${assetName}`;
 
-  const timeline: [string, string, string][] = [[reported, `Issue reported: ${firstLine}`, 'Client']];
+  const timeline: [string, string, string][] = [[fmtDateTime(t.createdAt), `Issue reported: ${t.title}`, 'Client']];
   if (t.initialResponse) timeline.push([fmtDateTime(t.initialResponse.at), 'Report acknowledged and analysis started', 'NXS support']);
-  if (t.diagnosis) timeline.push([fmtDateTime(t.diagnosis.at), 'Cause identified; initial RCA sent and fix started', 'NXS support']);
+  if (t.diagnosis) timeline.push([fmtDateTime(t.diagnosis.at), 'Cause found; initial RCA sent and fix started', 'NXS developer']);
   for (const a of t.activity) {
-    if (a.kind === 'status' && /to Waiting for testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Fix done, handed to testing', 'NXS developer']);
-    if (a.kind === 'status' && /to On testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Testing started', 'NXS QA']);
+    if (a.kind === 'status' && /to Waiting for testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Fix done and handed to testing', 'NXS developer']);
+    if (a.kind === 'status' && /to On testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Testing started on staging', 'NXS QA']);
   }
-  if (handoff) timeline.push([fmtDateTime(handoff.at), 'Fix passed testing; sent to the client to deploy', 'NXS QA']);
-  if (t.resolvedAt) timeline.push([fmtDateTime(t.resolvedAt), 'Fix deployed', 'Client']);
+  if (handoff) timeline.push([fmtDateTime(handoff.at), 'Fix passed testing and was sent for approval', 'NXS QA']);
+  if (t.resolvedAt) timeline.push([fmtDateTime(t.resolvedAt), 'Fix deployed and live', 'NXS developer']);
+
+  // Only the factors that played a part; the rest are simply not listed.
+  const factors: [string, string][] = [['Code / Application', why1]];
+  if (/payment|gateway|connector|ads|marketplace|sync/.test(where)) factors.push(['Third-party services', 'The service on the other side was checked and had no outage; the fault was on our side of the connection.']);
+  factors.push(['Process', 'No pre-release test covered this case.'], ['Monitoring', `No alert watched ${where}, so it was found through your report.`]);
+
+  const fixSteps = fix
+    .split(/(?<=[.!?])\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => cap(pastTense(x.charAt(0).toLowerCase() + x.slice(1))));
+  const steps = [
+    ...(/^reproduc/i.test(fixSteps[0] ?? '') ? [] : ['Reproduced the issue on staging, following the client’s report.']),
+    ...fixSteps,
+    ...(handoff ? ['Tested the fix on staging and sent it for approval with the release notes.'] : []),
+    ...(t.resolvedAt ? [`Deployed it to production on ${fmtDateTime(t.resolvedAt)} WIB.`] : []),
+  ];
 
   return {
     header: [
@@ -128,89 +156,71 @@ export function fullRcaDraftOf(t: Ticket, ctx: RcaContext): FullRcaContent {
       ['Platform', ctx.asset ? `${ASSET_CATEGORY_LABEL[ctx.asset.category]}, ${ctx.asset.environment.toLowerCase()}` : '—'],
       ['Ticket ID', t.id],
       ['Priority', priority],
-      ['Report date', fmtDateTime(base).split(',')[0]],
+      ['Report date', dateOnly(sentAt)],
       ['Prepared by', 'NXS support team'],
-      ['Status', handoff ? 'Final' : 'Draft'],
+      ['Status', t.status === 'resolved' ? 'Final' : 'Draft'],
     ],
     summary: [
       ['What happened', firstLine],
       ['Impact', `${effect}${fixedAt ? ` It lasted ${fmtDuration(fixedAt - t.createdAt)} from the report to the fix.` : ''}`],
-      ['Cause (plain language)', cause],
+      ['Cause', cause],
       ['Current status', status],
       ['Key prevention step', prevention],
     ],
     details: [
-      ['Start time', `${reported} WIB, when it was reported (the logs may show an earlier start)`],
-      ['Detected at', `${reported} WIB`],
-      ['Detected by', t.source.channel === 'portal' ? 'Client report (Client Portal)' : 'Client report, logged by NXS'],
+      ['Reported at', `${fmtDateTime(t.createdAt)} WIB`],
+      ['Detected by', t.source.channel === 'portal' ? 'Client report, through the Client Portal' : 'Client report, logged by NXS'],
       ['Resolved at', t.resolvedAt ? `${fmtDateTime(t.resolvedAt)} WIB` : handoff ? `${fmtDateTime(handoff.at)} WIB (fix ready)` : 'Not yet'],
       ['Total duration', fixedAt ? fmtDuration(fixedAt - t.createdAt) : 'Ongoing'],
-      ['Time to detect', 'Found by the client’s report: not measured'],
-      ['Time to resolve', fixedAt ? fmtDuration(fixedAt - t.createdAt) : 'Ongoing'],
-      ['Affected areas', `${where.charAt(0).toUpperCase()}${where.slice(1)} on ${assetName}`],
-      ['Users affected', TO_CONFIRM('estimate or analytics data')],
+      ['Affected area', `${cap(where)} on ${assetName}`],
+      ['Users affected', users],
       ['Business impact', effect],
     ],
     timeline,
     evidence: [
       ['Observed symptoms', t.description],
-      ['Error messages', TO_CONFIRM('exact error text')],
-      ['Logs reviewed', area ? `Application and server logs for ${where}` : 'Application and server logs'],
-      ['Monitoring data', ctx.asset?.uptime30d != null ? `Uptime over the last 30 days: ${ctx.asset.uptime30d}%` : 'No monitoring on this asset'],
-      ['Recent changes (last 7 days)', TO_CONFIRM('updates, deployments, DNS, content or hosting changes')],
-      ['Screenshots / attachments', t.attachments.length ? t.attachments.map((f) => f.name).join(', ') : 'None'],
+      ...(quoted ? ([['Error shown to users', `“${quoted}”`]] as [string, string][]) : []),
+      ['Logs reviewed', `Application and server logs for ${where}`],
+      ...(ctx.asset?.uptime30d != null ? ([['Monitoring data', `Uptime over the last 30 days: ${ctx.asset.uptime30d}%`]] as [string, string][]) : []),
     ],
     method: '5 Whys',
     whys: [
       ['Problem', 'What went wrong?', firstLine],
-      ['Why 1', 'Why did that happen?', cause],
-      ['Why 2', 'Why did the error occur?', area ? `In ${where}, ${area.cause}.` : TO_CONFIRM('the next cause')],
-      ['Why 3', 'Why did it reach production?', 'The change went live without a check that covers this case.'],
-      ['Why 4', 'Why wasn’t it caught first?', `No automated test or alert covers ${where}.`],
+      ['Why 1', 'Why did that happen?', why1],
+      ['Why 2', 'Why did it start now?', `A recent change to ${where} handled this case differently from before.`],
+      ['Why 3', 'Why did it reach production?', 'The change went live without a test that covers this case.'],
+      ['Why 4', 'Why wasn’t it caught first?', `No automated test or alert watches ${where}.`],
       ['Why 5', 'Why was there no such check?', `Checks for ${where} were never part of the release and monitoring plan.`],
     ],
     rootCause: `Changes to ${where} on ${assetName} could reach production without a test or an alert that covers this case.`,
-    factors: [
-      ['Code / Application', cause],
-      ['Hosting / Infrastructure', 'None found'],
-      ['Third-party services', /payment|gateway|connector|ads|marketplace|sync/.test(where) ? 'The third-party service behind it was checked; no outage on their side' : 'None found'],
-      ['Data / Content', 'None found'],
-      ['Process', 'No pre-release check for this case'],
-      ['People / Communication', 'None found'],
-      ['Monitoring', `No alert for ${where}; it was found by the client’s report`],
-    ],
+    factors,
     wentWell: t.diagnosis && t.initialResponse ? 'The report was acknowledged and the cause found within the SLA.' : 'The report was picked up within the SLA.',
-    didntGoWell: 'Detection depended on the client reporting the issue.',
+    didntGoWell: 'We found out from the client’s report instead of our own monitoring.',
     resolution: [
-      ['Immediate fix applied', fix],
-      ['Verification performed', `Tested by NXS QA before it went to the client: ${where} end to end, on desktop and mobile.`],
-      ['Data loss or rollback impact', 'None'],
+      ['Fix', `${cap(where)} on ${assetName} was fixed${handoff?.imageTag ? ` and released as ${handoff.imageTag}` : ''}.`],
+      ['Verification', `NXS QA tested ${where} end to end on staging, on desktop and mobile, before it went to the client.`],
+      ['Data loss or rollback', 'None. No data was lost and no rollback was needed.'],
     ],
-    steps: fix
-      .split(/(?<=[.!?])\s+/)
-      .map((x) => x.trim())
-      .filter(Boolean),
+    steps,
     actions: [
-      { action: `Apply and verify the fix on ${assetName}`, type: 'Corrective', owner: 'NXS developer', due: handoff ? due(0) : TO_CONFIRM('date'), status: handoff ? 'Done' : 'In progress' },
+      { action: `Apply and verify the fix on ${assetName}`, type: 'Corrective', owner: 'NXS developer', due: t.resolvedAt ? dateOnly(t.resolvedAt) : due(1), status: t.resolvedAt ? 'Done' : 'In progress' },
       { action: `Add an automated test for this case in ${where}`, type: 'Preventive', owner: 'NXS developer', due: due(7), status: 'Open' },
       { action: `Add an alert that fires when ${where} fails`, type: 'Detective', owner: 'NXS support', due: due(7), status: 'Open' },
-      { action: 'Add this check to the pre-release checklist', type: 'Process', owner: 'NXS QA', due: due(14), status: 'Open' },
+      { action: 'Add this case to the pre-release checklist', type: 'Process', owner: 'NXS QA', due: due(14), status: 'Open' },
     ],
-    lessons: [`${where.charAt(0).toUpperCase()}${where.slice(1)} needs its own check before every release.`, 'We should hear about failures from our monitoring before the client does.'],
+    lessons: [`${cap(where)} needs its own check before every release.`, 'Our monitoring should tell us about a failure before the client does.'],
     risk: [
-      ['Likelihood of recurrence', t.severity === 'critical' ? 'Medium' : 'Low'],
+      ['Likelihood of recurrence', t.severity === 'critical' ? 'Medium, until the test and the alert are in place' : 'Low'],
       ['Residual risk after actions', 'Low'],
-      ['Follow-up review date', due(30)],
+      ['Follow-up review', dateOnly(sentAt + 30 * day)],
     ],
     signoff: [
-      ['Prepared by (support / developer)', 'NXS support team', handoff ? fmtDateTime(handoff.at).split(',')[0] : ''],
-      ['Reviewed by (project / account manager)', 'NXS account manager', handoff ? fmtDateTime(handoff.at).split(',')[0] : ''],
-      ['Accepted by (client)', t.resolvedAt ? ctx.reporterName : '', t.resolvedAt ? fmtDateTime(t.resolvedAt).split(',')[0] : ''],
+      ['Prepared by', 'NXS support team', dateOnly(sentAt)],
+      ['Reviewed by', 'NXS project manager', dateOnly(sentAt)],
+      ['Fix accepted by (client)', t.resolvedAt ? ctx.reporterName : '—', t.resolvedAt ? dateOnly(t.resolvedAt) : '—'],
     ],
   };
 }
-
-
 
 /** Every single-value field of the report, by its label, so an instruction can name one. */
 function fields(c: FullRcaContent): { label: string; get: () => string; set: (v: string) => void }[] {
@@ -349,4 +359,100 @@ export function answer(question: string, t: Ticket, assetName: string, a: Pick<A
 /** A first draft of the resolution notes; QA adds anything specific to this fix. */
 export function verifiedDraft(assetName: string): string {
   return `Fixed on ${assetName}. The steps from the report now work as expected, tested on desktop and mobile, and the related flows still work.`;
+}
+
+/* ---------- Changing the initial RCA by asking ---------- */
+
+export type RcaPart = 'problem' | 'issue' | 'fix';
+export interface RcaDraftText {
+  problem: string;
+  issue: string;
+  fix: string;
+}
+const PART_NAME: Record<RcaPart, string> = { problem: 'issue', issue: 'cause', fix: 'fix' };
+
+/** Technical words a client may not know, and plainer ones. */
+const PLAIN: [RegExp, string][] = [
+  [/hand-off to the payment gateway/gi, 'step where the order goes to the bank'],
+  [/payment gateway/gi, 'bank payment service'],
+  [/callbacks?/gi, 'reply from the bank'],
+  [/\bAPI\b/g, 'connection'],
+  [/\bsync(s|ing|ed)?\b/gi, 'update$1'],
+  [/\bconnector\b/gi, 'link between the systems'],
+  [/\brecords\b/gi, 'entries'],
+  [/\bmapping\b/gi, 'matching'],
+  [/\bjob\b/gi, 'scheduled task'],
+  [/\bre-sync\b/gi, 'update again'],
+  [/\bend to end\b/gi, 'from start to finish'],
+  [/\bretry\b/gi, 'second try'],
+];
+const oneSentence = (x: string) => (x.match(/^[^.!?]+[.!?]/)?.[0] ?? x).trim();
+
+/** Which part an instruction is about: named outright, else the cause. */
+function partOf(q: string): RcaPart | null {
+  if (/\b(cause|why|root|traced)\b/i.test(q)) return 'issue';
+  if (/\b(fix|plan|how we|solution|solve)\b/i.test(q)) return 'fix';
+  if (/\b(issue|problem|summary|what happens)\b/i.test(q)) return 'problem';
+  return null;
+}
+
+/**
+ * The AI's change to the initial RCA from a plain instruction: simpler words,
+ * shorter, more detail, or a part replaced outright ("Cause: …"). Simulated
+ * from the words; a real version would ask a model.
+ */
+export function editInitialRca(d: RcaDraftText, q: string): { draft: RcaDraftText; changed: RcaPart[]; reply: string } {
+  const text = q.trim();
+  const next = { ...d };
+  const set = /^(issue|problem|cause|fix)\s*:\s*(.+)$/is.exec(text);
+  if (set) {
+    const part: RcaPart = /cause/i.test(set[1]) ? 'issue' : /fix/i.test(set[1]) ? 'fix' : 'problem';
+    next[part] = set[2].trim().replace(/([^.!?])$/, '$1.');
+    return { draft: next, changed: [part], reply: `Replaced the ${PART_NAME[part]} with your words.` };
+  }
+  const named = partOf(text);
+  if (/plain|simple|simpler|jargon|technical|client.*understand|easier/i.test(text)) {
+    const parts: RcaPart[] = named ? [named] : ['problem', 'issue', 'fix'];
+    const changed = parts.filter((p) => {
+      const plain = PLAIN.reduce((x, [re, to]) => x.replace(re, to), next[p]);
+      if (plain === next[p]) return false;
+      next[p] = plain;
+      return true;
+    });
+    return changed.length
+      ? { draft: next, changed, reply: `Rewrote the ${changed.map((p) => PART_NAME[p]).join(' and ')} in plainer words.` }
+      : { draft: next, changed, reply: 'It already reads plainly; nothing technical to swap out.' };
+  }
+  if (/short|concise|brief|trim|less/i.test(text)) {
+    const parts: RcaPart[] = named ? [named] : ['issue', 'fix'];
+    const changed = parts.filter((p) => {
+      const one = oneSentence(next[p]);
+      if (one === next[p]) return false;
+      next[p] = one;
+      return true;
+    });
+    return changed.length
+      ? { draft: next, changed, reply: `Cut the ${changed.map((p) => PART_NAME[p]).join(' and ')} down to one sentence.` }
+      : { draft: next, changed, reply: 'Each part is already one sentence.' };
+  }
+  if (/detail|longer|more|explain|expand/i.test(text)) {
+    const part = named ?? 'fix';
+    const extra = part === 'fix' ? ' We’ll try it on staging first, then check it with the client’s own steps before it goes live.' : part === 'issue' ? ' We saw it in the logs for the orders in the report, and it only happens on this path.' : ' It started recently and affects everyone who takes this path.';
+    next[part] = `${next[part].trim()}${extra}`;
+    return { draft: next, changed: [part], reply: `Added a line of detail to the ${PART_NAME[part]}.` };
+  }
+  const add = /^(add|mention|include|say)\s+(?:that\s+)?(.+)$/is.exec(text);
+  if (add) {
+    const part = named ?? 'issue';
+    const line = add[2].trim();
+    next[part] = `${next[part].trim()} ${line.charAt(0).toUpperCase()}${line.slice(1).replace(/([^.!?])$/, '$1.')}`;
+    return { draft: next, changed: [part], reply: `Added that to the ${PART_NAME[part]}.` };
+  }
+  // A part named but not what to do with it: ask back, with the ways to answer.
+  if (named) {
+    const word = PART_NAME[named];
+    const label = word.charAt(0).toUpperCase() + word.slice(1);
+    return { draft: d, changed: [], reply: `How should the ${word} change? Write the new one as “${label}: …”, or ask me to make it simpler, shorter or more detailed.` };
+  }
+  return { draft: d, changed: [], reply: 'Which part, and how? For example “make the cause less technical”, “shorter”, or “Fix: …” with your own words.' };
 }

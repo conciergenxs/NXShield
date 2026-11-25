@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import { BarChart3, Globe, GraduationCap, Inbox, Layers, Plus, Search, type LucideIcon } from 'lucide-react';
 import type { AssetCategory, Ticket, TicketStatus } from '../types';
 import { PORTAL_STATUS_LABEL, portalStatus } from '../lib/domain';
+import { fullRcaPlan } from '../lib/release';
 import { useStore } from '../store';
 import { Badge, cx, type Tone } from '../components/ui';
 import { Dropdown } from '../components/pickers';
-import { STATUS_TONE } from '../components/domain';
+import { STATUS_ICON, STATUS_TONE } from '../components/domain';
 import { usePortalUser } from './shared';
 
 /*
@@ -41,7 +42,7 @@ function greeting(now: number) {
   return h < 11 ? 'Good morning' : h < 15 ? 'Good afternoon' : 'Good evening';
 }
 
-function TicketCard({ t, meId }: { t: Ticket; meId: string }) {
+function TicketCard({ t, meId, inColumn }: { t: Ticket; meId: string; inColumn?: boolean }) {
   const { assetOf, reporterOf } = useStore();
   const stage = portalStatus(t.status);
   const asset = assetOf(t.assetId);
@@ -63,9 +64,12 @@ function TicketCard({ t, meId }: { t: Ticket; meId: string }) {
             <span className="ticket-id">{t.id}</span>
           </p>
         </div>
-        <Badge tone={STATUS_TONE[stage]} dot>
-          {PORTAL_STATUS_LABEL[stage]}
-        </Badge>
+        {/* In a column the column already says where it stands. */}
+        {!inColumn && (
+          <Badge tone={STATUS_TONE[stage]} dot>
+            {PORTAL_STATUS_LABEL[stage]}
+          </Badge>
+        )}
       </div>
       <div className="pk-card-body">
         <div className="pk-card-text">
@@ -73,7 +77,7 @@ function TicketCard({ t, meId }: { t: Ticket; meId: string }) {
           <p className="pk-card-next">Reported by {reporter?.id === meId ? 'you' : (reporter?.name ?? 'your team')}</p>
         </div>
         <Link to={`/portal/tickets/${t.id}`} className={cx('btn btn-sm', ready ? 'btn-primary' : 'btn-secondary')}>
-          {ready ? 'Review and deploy' : 'View'}
+          {ready ? 'Review and approve' : 'View'}
         </Link>
       </div>
     </li>
@@ -102,11 +106,17 @@ export function PortalHome() {
     const ongoing = tickets
       .filter((t) => ORDER.includes(portalStatus(t.status)))
       .sort((a, b) => rank(a) - rank(b) || slaOf(a).active.due - slaOf(b).active.due);
-    const done = tickets.filter((t) => t.status === 'resolved' || t.status === 'canceled').sort((a, b) => (b.resolvedAt ?? b.canceledAt ?? b.updatedAt) - (a.resolvedAt ?? a.canceledAt ?? a.updatedAt));
+    // Latest news first: when it was resolved or canceled, or when its full RCA report arrived, if that came later.
+    const lastNews = (t: Ticket) => {
+      const closed = t.resolvedAt ?? t.canceledAt ?? t.updatedAt;
+      const rca = t.status === 'resolved' ? fullRcaPlan(t).due : null;
+      return rca != null && rca <= now ? Math.max(closed, rca) : closed;
+    };
+    const done = tickets.filter((t) => t.status === 'resolved' || t.status === 'canceled').sort((a, b) => lastNews(b) - lastNews(a));
     // Just submitted, still with NXS for its reply and analysis: newest first.
     const fresh = ongoing.filter((t) => t.status === 'new').sort((a, b) => b.createdAt - a.createdAt);
     return { fresh, ongoing: ongoing.filter((t) => t.status !== 'new'), done };
-  }, [tickets, slaOf]);
+  }, [tickets, slaOf, now]);
   if (!user || !client) return null;
 
   const ready = ongoing.filter((t) => t.status === 'ready_to_deploy').length;
@@ -128,7 +138,7 @@ export function PortalHome() {
           </h1>
           <p className="page-desc">
             {client.name} has {fresh.length + ongoing.length} open {fresh.length + ongoing.length === 1 ? 'ticket' : 'tickets'} with NXS.
-            {ready > 0 && ` ${ready} ${ready === 1 ? 'fix is' : 'fixes are'} ready for you to deploy.`}
+            {ready > 0 && ` ${ready} ${ready === 1 ? 'fix is' : 'fixes are'} ready for you to approve.`}
           </p>
         </div>
         <Link to="/portal/tickets/new" className="btn btn-primary">
@@ -170,7 +180,35 @@ export function PortalHome() {
         </div>
       </div>
 
-      {shown.length === 0 ? (
+      {tab === 'ongoing' && shown.length > 0 ? (
+        // Ongoing as two columns: what NXS is fixing, and what's ready for the client to deploy.
+        <div className="pk-kanban">
+          {(['in_progress', 'ready_to_deploy'] as const).map((stage) => {
+            const col = shown.filter((t) => portalStatus(t.status) === stage);
+            const Icon = STATUS_ICON[stage];
+            return (
+              <section key={stage} className={cx('board-col pk-col', `tone-${STATUS_TONE[stage]}`, stage === 'ready_to_deploy' && 'is-ready')} aria-label={`${PORTAL_STATUS_LABEL[stage]}, ${col.length} ${col.length === 1 ? 'ticket' : 'tickets'}`}>
+                <header className="board-col-head">
+                  <h2>
+                    <Icon size={17} aria-hidden className="board-col-icon" />
+                    {PORTAL_STATUS_LABEL[stage]}
+                    <span className="board-count">{col.length}</span>
+                  </h2>
+                </header>
+                {col.length > 0 ? (
+                  <ul className="board-col-body">
+                    {col.map((t) => (
+                      <TicketCard key={t.id} t={t} meId={user.id} inColumn />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="board-empty pk-col-empty">{stage === 'in_progress' ? 'Nothing being fixed right now.' : 'No fixes waiting for your approval.'}</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      ) : shown.length === 0 ? (
         <div className="pt-empty">{term
             ? `No tickets match “${query.trim()}”.`
             : tab === 'new'

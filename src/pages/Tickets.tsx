@@ -31,7 +31,7 @@ export type { TicketsView };
 
 const VIEW_DESC: Record<TicketsView, string> = {
   list: 'Issues raised by clients, across every client and asset.',
-  board: 'Drag a ticket to its next stage. Only moves the workflow allows are accepted.',
+  board: 'Drag a ticket to move it to another stage.',
   calendar: 'Each open ticket runs from the day it came in to the day it is due.',
 };
 const PORTAL_VIEW_DESC: Record<TicketsView, (client: string) => string> = {

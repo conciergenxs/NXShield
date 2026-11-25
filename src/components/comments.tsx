@@ -16,7 +16,7 @@ export function withMentions(text: string, names: string[]) {
 export type Mentionable = { id: string; name: string; title?: string; photo?: string };
 
 /** The comment box: text, the send button inside it, and @ to pick someone from this thread's people. */
-export function CommentBox({ value, onChange, onSend, people, label, placeholder }: { value: string; onChange: (v: string) => void; onSend: () => void; people: Mentionable[]; label: string; placeholder: string }) {
+export function CommentBox({ value, onChange, onSend, people, label, placeholder, sendLabel = 'Comment' }: { value: string; onChange: (v: string) => void; onSend: () => void; people: Mentionable[]; label: string; placeholder: string; sendLabel?: string }) {
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
@@ -122,7 +122,7 @@ export function CommentBox({ value, onChange, onSend, people, label, placeholder
       <div className="comment-box-foot">
         <Button variant="primary" size="sm" type="submit" disabled={!value.trim()}>
           <Send size={15} aria-hidden />
-          Comment
+          {sendLabel}
         </Button>
       </div>
     </form>

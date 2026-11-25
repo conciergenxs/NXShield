@@ -1,4 +1,4 @@
-import { Ban, Briefcase, CircleCheck, CircleDashed, CircleX, ClipboardList, Clock, CodeXml, FlaskConical, Hourglass, Inbox, ListChecks, Loader, OctagonAlert, Rocket, TriangleAlert, type LucideIcon, ShieldOff } from 'lucide-react';
+import { BadgeCheck, Ban, Briefcase, CircleCheck, CircleDashed, CircleX, ClipboardList, Clock, CodeXml, FlaskConical, Hourglass, Inbox, ListChecks, Loader, OctagonAlert, Rocket, TriangleAlert, type LucideIcon, ShieldOff } from 'lucide-react';
 import type { AssetStatus, Category, Client, Severity, TeamMember, Ticket, TicketStatus } from '../types';
 import { ASSET_STATUS_LABEL, CATEGORY_LABEL, NO_PRIORITY_LABEL, SEVERITY_LABEL, STATUS_LABEL, portalStatus } from '../lib/domain';
 import { fmtDuration } from '../lib/format';
@@ -44,6 +44,7 @@ export const STATUS_ICON: Record<TicketStatus, LucideIcon> = {
   blocked: OctagonAlert,
   waiting_testing: ListChecks,
   on_testing: FlaskConical,
+  qa_passed: BadgeCheck,
   ready_to_deploy: Rocket,
   resolved: CircleCheck,
   canceled: Ban,
@@ -61,6 +62,8 @@ export const STATUS_TONE: Record<TicketStatus, Tone> = {
   blocked: 'orange',
   waiting_testing: 'indigo',
   on_testing: 'teal',
+  // Passed testing; the release is being prepared.
+  qa_passed: 'green',
   ready_to_deploy: 'yellow',
   resolved: 'purple',
   canceled: 'neutral',
