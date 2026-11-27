@@ -205,6 +205,10 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
               </dd>
             </div>
           </dl>
+          <a className="btn btn-secondary btn-sm pt-tl-open" href={`/report/${ticket.id}/initial`} target="_blank" rel="noopener noreferrer">
+            <FileText size={15} aria-hidden />
+            View report
+          </a>
         </div>
       ),
     });

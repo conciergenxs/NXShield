@@ -55,6 +55,8 @@ export interface ClientUser {
 export interface Client {
   id: string;
   name: string;
+  /** The company behind the brand, as the RCA reports name the client (CML is JTI's). Falls back to the name. */
+  company?: string;
   code: string;
   industry: string;
   city: string;

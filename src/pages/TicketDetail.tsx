@@ -2868,10 +2868,16 @@ function RcaFocus({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) 
             </span>
           </div>
           {sent ? (
-            <span className="ai-focus-sent">
-              <CircleCheck size={15} aria-hidden />
-              Sent by {actorName(sent.by)} · {fmtDateTime(sent.at)}
-            </span>
+            <>
+              <span className="ai-focus-sent">
+                <CircleCheck size={15} aria-hidden />
+                Sent by {actorName(sent.by)} · {fmtDateTime(sent.at)}
+              </span>
+              <a className="btn btn-secondary btn-sm" href={`/report/${ticket.id}/initial`} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={15} aria-hidden />
+                Open in new tab
+              </a>
+            </>
           ) : (
             can('ticket.update') && (
               <Button variant="primary" disabled={busy} onClick={() => sendInitialRca(ticket.id)}>

@@ -14,7 +14,7 @@ import { PortalLayout } from './portal/PortalLayout';
 import { PortalNewTicket } from './portal/PortalNewTicket';
 import { PortalHome } from './portal/PortalHome';
 import { PortalTicket } from './portal/PortalTicket';
-import { ReportPage } from './portal/ReportPage';
+import { InitialReportPage, ReportPage } from './portal/ReportPage';
 
 function NotFound() {
   return (
@@ -32,8 +32,9 @@ export function App() {
       <Route path="login" element={<Login />} />
       <Route path="login/forgot" element={<ForgotPassword />} />
 
-      {/* A full RCA as a page anyone with the link can read: opened in a new tab from the portal. */}
+      {/* The RCA reports as pages anyone with the link can read, opened in a new tab: the full one, and the initial one. */}
       <Route path="report/:id" element={<ReportPage />} />
+      <Route path="report/:id/initial" element={<InitialReportPage />} />
 
       {/* Client Portal: client users only, with their own sign in. */}
       <Route path="portal/login" element={<Login kind="client" />} />

@@ -437,7 +437,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const client = clients.find((c) => c.id === t.clientId);
     const reporter = client?.users.find((u) => u.id === t.reporterId);
     if (t.fullRcaDraft) return t.fullRcaDraft;
-    return fullRcaDraftOf(t, { asset: assets.find((a) => a.id === t.assetId), clientName: client?.name ?? 'the client', reporterName: reporter?.name ?? 'the client' });
+    return fullRcaDraftOf(t, { asset: assets.find((a) => a.id === t.assetId), clientName: client?.company ?? client?.name ?? 'the client', reporterName: reporter?.name ?? 'the client' });
   }, []);
 
   const changeStatus = useCallback<Store['changeStatus']>(

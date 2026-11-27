@@ -19374,3 +19374,15 @@ a.st-client:hover .st-client-go {
     grid-auto-columns: auto;
   }
 }
+
+/* The Initial RCA Report page: each part is a short paragraph, in the report's body type. */
+.report-text {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.pt-tl-open {
+  margin-top: 12px;
+}

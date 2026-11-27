@@ -92,7 +92,7 @@ function users(clientId: string, domain: string, list: [string, string, ClientUs
 
 export const clients: Client[] = [
   {
-    id: 'cml', name: 'CML', code: 'CML', industry: 'Consumer goods & e-commerce', city: 'Jakarta Selatan',
+    id: 'cml', name: 'CML', company: 'JTI', code: 'CML', industry: 'Consumer goods & e-commerce', city: 'Jakarta Selatan',
     logo: { initials: 'CM', bg: '#FCE8EF', fg: '#A8325E' },
     contact: { name: 'Lucky Salim', title: 'Tech PIC', email: 'lucky.salim@cml.example', phone: '+62 812-7710-2140' },
     slaPolicyId: 'pol-standard', accountManagerId: 'tm-sarah', testerId: 'tm-fajar', devs: { frontend: 'tm-alfiana', backend: 'tm-mega' }, since: '2023-04-01',
@@ -124,7 +124,7 @@ export const clients: Client[] = [
 const h = (hoursAgo: number) => LOADED_AT - hoursAgo * HOUR;
 
 export const assets: Asset[] = [
-  { id: 'AST-CML-01', ownerId: 'tm-alfiana', clientId: 'cml', name: 'Consumer Website', category: 'consumer_website', url: 'https://www.cml.example', environment: 'Production', status: 'degraded', statusNote: 'Payment confirmation is slow for some orders.', statusChangedAt: h(5.6), uptime30d: 99.62, monitor: { method: 'health_url', endpoint: 'https://www.cml.example/health', intervalMins: 1, hasToken: false } },
+  { id: 'AST-CML-01', ownerId: 'tm-alfiana', clientId: 'cml', name: 'Consumer Website', category: 'consumer_website', url: 'https://letscml.id/', environment: 'Production', status: 'degraded', statusNote: 'Payment confirmation is slow for some orders.', statusChangedAt: h(5.6), uptime30d: 99.62, monitor: { method: 'health_url', endpoint: 'https://letscml.id/health', intervalMins: 1, hasToken: false } },
   { id: 'AST-CML-02', ownerId: 'tm-mega', clientId: 'cml', name: 'Marketing-Tech Dashboard', category: 'marketing_dashboard', url: 'https://martech.cml.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(310), uptime30d: 99.95, monitor: { method: 'status_api', endpoint: 'https://martech.cml.example/api/status', intervalMins: 5, hasToken: true } },
   { id: 'AST-ARA-01', ownerId: 'tm-guntur', clientId: 'aroma', name: 'Omnichannel Dashboard', category: 'omnichannel_dashboard', url: 'https://omni.aromaabadi.example', environment: 'Production', status: 'degraded', statusNote: 'Marketplace orders are syncing late after the connector upgrade.', statusChangedAt: h(1.4), uptime30d: 99.48, monitor: { method: 'status_api', endpoint: 'https://omni.aromaabadi.example/api/status', intervalMins: 1, hasToken: true } },
   { id: 'AST-ARA-02', ownerId: 'tm-michael', clientId: 'aroma', name: 'LMS App', category: 'lms_app', url: 'https://learn.aromaabadi.example', environment: 'Production', status: 'operational', statusNote: '', statusChangedAt: h(520), uptime30d: 99.97, monitor: { method: 'uptime_service', endpoint: 'https://uptime.betterstack.example/api/v2/monitors/48213', intervalMins: 5, hasToken: true } },
