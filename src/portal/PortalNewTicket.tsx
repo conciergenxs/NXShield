@@ -5,8 +5,10 @@ import { TicketForm } from '../components/TicketForm';
 import { Card } from '../components/ui';
 import { usePortalUser } from './shared';
 
-/* A client raises a ticket for one of their assets. The form is the same one
-   NXS uses to log a ticket for them; only the client is fixed here. */
+/* A client raises a ticket: the category (from the ones their PIC may raise), a title and what happened.
+   The AI sets the asset and priority and replies at once; their PM
+   reviews it. The form is the one NXS uses to log a ticket for them; only the
+   client is fixed here. */
 export function PortalNewTicket() {
   const { submitPortalTicket, toast } = useStore();
   const { user, client, assets } = usePortalUser();
@@ -22,8 +24,8 @@ export function PortalNewTicket() {
             <ArrowLeft size={16} aria-hidden />
             Back to tickets
           </button>
-          <h1 className="portal-form-title">Tell us what you need</h1>
-          <p className="portal-form-desc">Tell us what happened or what you need. NXS replies within an hour.</p>
+          <h1 className="portal-form-title">Report a problem</h1>
+          <p className="portal-form-desc">You get a reply right away, and the Initial RCA Report within 3 hours.</p>
         </header>
 
         {assets.length === 0 ? (

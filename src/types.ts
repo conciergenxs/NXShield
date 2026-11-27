@@ -48,6 +48,8 @@ export interface ClientUser {
   email: string;
   phone: string;
   role: 'client_admin' | 'client_user';
+  /** The categories this PIC raises tickets for; the new-ticket form offers only these. Set in Settings. */
+  categories: Category[];
 }
 
 export interface Client {
@@ -202,8 +204,10 @@ export interface Attachment {
 /** Sent to the client when the fix is ready to deploy: the full RCA document(s), with an optional note. */
 export interface Handoff {
   id: string;
-  /** Release notes: what was fixed and how it was checked, as proof for the client. */
+  /** Release notes, written by the AI when the fix was merged and checked by the developer: what changed. */
   note: string;
+  /** QA's proof that it works, in their words; the screenshots and recordings are the attachments. Kept apart from the notes. */
+  proofNote?: string;
   attachments: Attachment[];
   /** The container image the fix ships in. */
   imageTag?: string;
@@ -212,6 +216,15 @@ export interface Handoff {
 }
 
 /** QA's result on staging: it works, with what they checked and any proof. */
+/** What the AI makes when QA passes the fix and it is merged: the container image and the release notes. The developer checks them, asking the AI for changes. */
+export interface ReleaseDraft {
+  imageTag: string;
+  notes: string;
+  /** When the fix was merged, which is when QA passed it. */
+  mergedAt: number;
+}
+
+/** QA's pass on staging: their proof that it works, as text and screenshots or recordings. Not the release notes. */
 export interface TestResult {
   at: number;
   by: Actor;
@@ -261,6 +274,27 @@ export interface ClientFeedback {
 }
 
 /** Why and when a ticket was canceled: ended without doing the work. */
+/**
+ * The PM wasn't sure it is an issue and sent it to the business team to check
+ * whether it is a feature request. Internal: the client sees it as submitted.
+ */
+export interface FeatureCheck {
+  by: Actor;
+  at: number;
+  /** The business team's answer. A feature request is canceled with the reason; an issue goes back to the PM. */
+  result?: { verdict: 'feature' | 'issue'; by: Actor; at: number; reason?: string };
+}
+
+/**
+ * Checking the issue is real, in layers: QA first, then the assigned developer,
+ * then the CTO. Each one not sure passes it up with what they checked; anyone
+ * who confirms it starts the work. Only the CTO can cancel it. Internal.
+ */
+export interface IssueCheck {
+  /** Who wasn't sure, oldest first: QA, then the developer. The layer now is one more than these. */
+  unsure: { by: Actor; at: number; note: string; proof: Attachment[] }[];
+}
+
 export interface Cancellation {
   by: Actor;
   reason: string;
@@ -323,6 +357,10 @@ export interface Ticket {
   resolvedAt: number | null;
   canceledAt: number | null;
   cancellation: Cancellation | null;
+  /** Who has checked whether the issue is real so far, while Not started. */
+  issueCheck?: IssueCheck;
+  /** Sent to the business team as a possible feature request, while New. */
+  featureCheck?: FeatureCheck;
   /** The client's approvals and declines of resolved fixes, oldest first. */
   feedback: ClientFeedback[];
   /** Every blocker the work has hit, oldest first. The last one is active while the status is Blocker. */
@@ -357,6 +395,8 @@ export interface Ticket {
   codeFix?: CodeFix;
   /** QA passed the fix on staging; the release goes to the client next. */
   testResult?: TestResult;
+  /** The AI's container image and release notes, made at the merge, as the developer last left them. Internal until sent. */
+  release?: ReleaseDraft;
   /** Marked as a security or data issue: a P2 then gets a full RCA too. */
   securityIssue?: boolean;
   /** The same issue came back after an earlier fix: a P3 then gets a full RCA too. */
@@ -371,11 +411,41 @@ export interface CodeFile {
   note: string;
   lines: DiffLine[];
 }
+/** A newer release of a package the fix uses. */
+export interface PackageRelease {
+  name: string;
+  installed: string;
+  latest: string;
+  bump: 'patch' | 'minor' | 'major';
+  /** What the new release brings, in a line. */
+  note: string;
+  maintainer: string;
+  url: string;
+}
+
+/** What the fix touches and how risky it is, read from its files. */
+export interface FixImpact {
+  risk: 'low' | 'medium' | 'high';
+  breaking: boolean;
+  /** The parts of the app it touches. */
+  areas: string[];
+  /** Things worth knowing before approving it. */
+  notes: string[];
+}
+
 /** The AI's code fix for a ticket: a branch, what it does, and the changed files. */
 export interface CodeFix {
   repo: string;
   branch: string;
+  /** Why the fix exists: its purpose, in a sentence or two. */
   summary: string;
+  /** The pull request the AI opened for it. */
+  pr: { number: number; title: string; commits: number };
+  /** What changed, as short lines. */
+  changes: string[];
+  impact: FixImpact;
+  /** Newer releases of packages the fix uses. */
+  packages: PackageRelease[];
   files: CodeFile[];
   /** How many times the developer asked the AI to revise it. */
   revision: number;
@@ -458,8 +528,13 @@ export interface Comment {
   text: string;
   /** What it replies to on the client's timeline: the initial RCA, or one fix sent (by its id). */
   on?: CommentOn;
+  /** For a reply: the comment that starts its thread (replies sit one level under it, as on YouTube). */
+  parentId?: string;
+  /** For a reply: the comment it answers, which may itself be a reply; shows as "replying to …". */
+  replyingTo?: string;
 }
-export type CommentOn = { kind: 'rca' } | { kind: 'release'; id: string };
+/** What a client comment is under on their timeline: the initial RCA, a fix sent to them, or the cancellation. */
+export type CommentOn = { kind: 'rca' } | { kind: 'release'; id: string } | { kind: 'cancel' };
 
 /** The AI's first read of a new ticket. QA checks it; anything still equal to it reads as set by AI until confirmed. */
 export interface TicketTriage {

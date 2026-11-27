@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Braces, Check, Globe, ImagePlus, Radar, Search, Trash2, Upload } from 'lucide-react';
-import type { AssetCategory, Attachment, MonitorMethod, SlaExclusionKind, TaskType, TicketStatus } from '../types';
-import { SLA_EXCLUSION_HINT, SLA_EXCLUSION_LABEL, ASSET_CATEGORIES, ASSET_CATEGORY_LABEL, AVAILABILITY_LABEL, UNBLOCK_TO, moveLabel, MONITOR_INTERVALS, MONITOR_METHODS, MONITOR_METHOD_HINT, MONITOR_METHOD_LABEL, STATUS_LABEL, TASK_TYPES, TASK_TYPE_LABEL } from '../lib/domain';
+import type { AssetCategory, Attachment, Category, Role, MonitorMethod, SlaExclusionKind, TaskType, TicketStatus } from '../types';
+import { CATEGORIES, CATEGORY_LABEL, ROLE_LABEL, SLA_EXCLUSION_HINT, SLA_EXCLUSION_LABEL, ASSET_CATEGORIES, ASSET_CATEGORY_LABEL, AVAILABILITY_LABEL, UNBLOCK_TO, moveLabel, MONITOR_INTERVALS, MONITOR_METHODS, MONITOR_METHOD_HINT, MONITOR_METHOD_LABEL, STATUS_LABEL, TASK_TYPES, TASK_TYPE_LABEL } from '../lib/domain';
 import { useStore } from '../store';
-import { verifiedDraft } from '../lib/rcaAi';
 import { Avatar, Button, Field, Modal, Select, TextArea, cx } from './ui';
 import { RichInput } from './RichInput';
 import { Dropdown } from './pickers';
@@ -21,6 +20,7 @@ export function Dialogs() {
   if (dialog.type === 'sla-exclusion') return <SlaExclusionDialog ticketId={dialog.ticketId} />;
   if (dialog.type === 'unblock') return <UnblockTicketDialog ticketId={dialog.ticketId} />;
   if (dialog.type === 'add-client') return <AddClientDialog />;
+  if (dialog.type === 'add-member') return <AddMemberDialog />;
   if (dialog.type === 'add-user') return <AddClientUserDialog clientId={dialog.clientId} />;
   if (dialog.type === 'add-asset') return <AddAssetDialog clientId={dialog.clientId} />;
   if (dialog.type === 'assign') return <AssignDialog ticketId={dialog.ticketId} then={dialog.then} />;
@@ -68,7 +68,7 @@ function CancelTicketDialog({ ticketId }: { ticketId: string }) {
   return (
     <Modal
       title={checked ? 'Not an issue?' : 'Cancel this ticket?'}
-      description={checked ? 'The ticket closes as canceled. The client sees the reason and your proof.' : 'The work stops here. The client sees it as canceled, and the reason goes into the activity history.'}
+      description={checked ? 'The client sees the reason and your proof.' : 'The client sees it as canceled.'}
       onClose={close}
       footer={
         <>
@@ -87,7 +87,7 @@ function CancelTicketDialog({ ticketId }: { ticketId: string }) {
           <Select id="cl-reason" value={preset} onChange={setPreset} options={CANCEL_PRESETS.map((p) => ({ value: p, label: p }))} />
         </Field>
         {checked ? (
-          <Field label="What you checked" htmlFor="cl-details" hint="Attach a screenshot or recording of it working." error={submitted ? error : ''}>
+          <Field label="What you checked" htmlFor="cl-details" error={submitted ? error : ''}>
             <RichInput id="cl-details" value={details} onChange={setDetails} files={proof} onFilesChange={setProof} invalid={submitted && !!error} placeholder="Followed the steps on desktop and on a phone; bank transfer shows the virtual account number." autoFocus />
           </Field>
         ) : (
@@ -121,7 +121,7 @@ function BlockTicketDialog({ ticketId }: { ticketId: string }) {
   return (
     <Modal
       title="Move to Blocked"
-      description="Work pauses until this clears. Only NXS sees it; the client still sees In progress."
+      description="Only NXS sees it; the client still sees In progress."
       onClose={close}
       footer={
         <>
@@ -162,7 +162,6 @@ function SlaExclusionDialog({ ticketId }: { ticketId: string }) {
     return (
       <Modal
         title="Count against the SLA again?"
-        description="Its deadlines start counting again, and late ones show as late."
         onClose={close}
         footer={
           <>
@@ -201,7 +200,7 @@ function SlaExclusionDialog({ ticketId }: { ticketId: string }) {
   return (
     <Modal
       title="Mark outside the SLA"
-      description="Only for the SLA’s exclusions. Its deadlines stop counting; the ticket stays open and keeps moving."
+      description="Only for the SLA’s exclusions."
       onClose={close}
       footer={
         <>
@@ -237,30 +236,28 @@ function SlaExclusionDialog({ ticketId }: { ticketId: string }) {
 /* ---------- Ready to deploy: testing passed; the resolution notes and proof go to the client ---------- */
 
 function RequestApprovalDialog({ ticketId }: { ticketId: string }) {
-  const { ticketOf, assetOf, changeStatus, setDialog } = useStore();
+  const { ticketOf, releaseOf, changeStatus, setDialog } = useStore();
   const ticket = ticketOf(ticketId);
-  // Drafted already, so it only needs checking and anything specific added.
-  const [note, setNote] = useState(() => (ticket ? verifiedDraft(assetOf(ticket.assetId)?.name ?? 'the asset') : ''));
-  const [files, setFiles] = useState<Attachment[]>([]);
+  // Moved to Ready to deploy from the menu: the AI's release (image and notes) and QA's proof, if any, as they stand.
+  const release = ticket ? releaseOf(ticket) : null;
+  const [note, setNote] = useState(() => release?.notes ?? '');
+  const [proofNote, setProofNote] = useState(() => ticket?.testResult?.note ?? '');
+  const [files, setFiles] = useState<Attachment[]>(() => ticket?.testResult?.proof ?? []);
   const [submitted, setSubmitted] = useState(false);
-  if (!ticket) return null;
-  const errors = {
-    note: note.trim().length < 10 ? 'Say what was done.' : '',
-    proof: files.length === 0 ? 'Add at least one screenshot or video as proof.' : '',
-  };
+  if (!ticket || !release) return null;
+  const errors = { note: note.trim().length < 10 ? 'Write what changed.' : '' };
   const close = () => setDialog(null);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (errors.note || errors.proof) return;
-    if (changeStatus(ticket.id, 'ready_to_deploy', { handoff: { note, attachments: files } })) close();
+    if (errors.note) return;
+    if (changeStatus(ticket.id, 'ready_to_deploy', { handoff: { note, attachments: files, imageTag: release.imageTag, proofNote } })) close();
   };
 
   return (
     <Modal
       title="Ready to deploy"
-      description="Testing passed. The resolution notes and proof go to the client, who reads them and deploys."
       onClose={close}
       width={560}
       footer={
@@ -276,17 +273,16 @@ function RequestApprovalDialog({ ticketId }: { ticketId: string }) {
     >
       <form id="request-approval" className="form-stack" onSubmit={submit} noValidate>
         <DialogSubject id={ticket.id} title={ticket.title} />
-        <Field label="Resolution notes" htmlFor="ra-note" hint="Drafted for you; add anything specific to this fix. Attach screenshots or a video as proof." error={submitted ? errors.note || errors.proof : ''}>
-          <RichInput
-            id="ra-note"
-            value={note}
-            onChange={setNote}
-            files={files}
-            onFilesChange={setFiles}
-            invalid={submitted && !!(errors.note || errors.proof)}
-            placeholder="What was done, and how was it checked?"
-            autoFocus
-          />
+        <Field label="Container registry" htmlFor="ra-tag">
+          <code id="ra-tag" className="fix-tag">
+            {release.imageTag}
+          </code>
+        </Field>
+        <Field label="Release notes" htmlFor="ra-note" error={submitted ? errors.note : ''}>
+          <TextArea id="ra-note" value={note} onChange={(e) => setNote(e.target.value)} rows={4} aria-invalid={(submitted && !!errors.note) || undefined} autoFocus />
+        </Field>
+        <Field label="Proof" htmlFor="ra-proof" optional>
+          <RichInput id="ra-proof" value={proofNote} onChange={setProofNote} files={files} onFilesChange={setFiles} rows={3} placeholder="What was checked on staging, and what it showed." />
         </Field>
       </form>
     </Modal>
@@ -431,7 +427,7 @@ function ResolveTicketDialog({ ticketId }: { ticketId: string }) {
       title="Resolve without client approval?"
       description={`${
         ticket.status === 'ready_to_deploy' ? `${reporter?.name ?? 'The client'} hasn’t approved the fix yet.` : `It hasn’t gone to ${reporter?.name ?? 'the client'} to approve yet.`
-      } The reason goes into the activity history.`}
+      }`}
       onClose={close}
       footer={
         <>
@@ -501,7 +497,7 @@ function AddClientDialog() {
     if (errors.name || errors.industry) return;
     const client = addClient({ name, industry, logoImage: logo });
     close();
-    navigate('/settings/workspace');
+    navigate(`/settings/clients/${client.id}`);
     toast(`${client.name} added. Next, add the people who raise tickets.`);
   };
 
@@ -509,7 +505,6 @@ function AddClientDialog() {
   return (
     <Modal
       title="Add client"
-      description="You can add their users and assets right after."
       onClose={close}
       footer={
         <>
@@ -567,6 +562,73 @@ function AddClientDialog() {
   );
 }
 
+/* ---------- Add someone to the NXS team ---------- */
+
+const MEMBER_ROLES: Role[] = ['support_agent', 'support_lead', 'admin', 'viewer'];
+const MEMBER_ROLE_HINT: Record<string, string> = {
+  support_agent: 'Works tickets: checks, fixes, tests.',
+  support_lead: 'Also assigns work and reviews it.',
+  admin: 'Everything, including settings.',
+  viewer: 'Reads tickets, changes nothing.',
+};
+
+function AddMemberDialog() {
+  const { addTeamMember, setDialog, toast } = useStore();
+  const [name, setName] = useState('');
+  const [title, setTitle] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<Role>('support_agent');
+  const [submitted, setSubmitted] = useState(false);
+  const close = () => setDialog(null);
+  const errors = {
+    name: name.trim().length < 2 ? 'Enter their full name.' : '',
+    email: !EMAIL_RE.test(email.trim()) ? 'Enter a valid work email, for example name@nxs.co.id.' : '',
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setSubmitted(true);
+    if (errors.name || errors.email) return;
+    const m = addTeamMember({ name: name.trim(), title: title.trim(), email: email.trim(), role });
+    toast(`${m.name} joined the team`);
+    close();
+  };
+  return (
+    <Modal
+      title="Add team member"
+      onClose={close}
+      footer={
+        <>
+          <Button variant="secondary" onClick={close}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="add-member">
+            Add member
+          </Button>
+        </>
+      }
+    >
+      <form id="add-member" className="form-grid" onSubmit={submit} noValidate>
+        <div className="span-2">
+          <Field label="Full name" htmlFor="am-name" error={submitted ? errors.name : ''}>
+            <input id="am-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Fajar Saputra" data-autofocus />
+          </Field>
+        </div>
+        <Field label="Job title" htmlFor="am-title" optional>
+          <input id="am-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="QA Engineer" />
+        </Field>
+        <Field label="Work email" htmlFor="am-email" error={submitted ? errors.email : ''}>
+          <input id="am-email" type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@nxs.co.id" />
+        </Field>
+        <div className="span-2">
+          <Field label="Role" htmlFor="am-role">
+            <Dropdown<Role> id="am-role" value={role} onChange={setRole} placeholder="Choose a role" options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r], description: MEMBER_ROLE_HINT[r] }))} />
+          </Field>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /* ---------- Add a client user ---------- */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -578,19 +640,21 @@ function AddClientUserDialog({ clientId }: { clientId: string }) {
   const [title, setTitle] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [cats, setCats] = useState<Category[]>(['tech']);
   const [submitted, setSubmitted] = useState(false);
   if (!client) return null;
   const close = () => setDialog(null);
   const errors = {
     name: name.trim().length < 2 ? 'Enter their full name.' : '',
     email: !EMAIL_RE.test(email.trim()) ? 'Enter a valid work email, for example name@company.com.' : '',
+    cats: cats.length === 0 ? 'Pick at least one category.' : '',
   };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (errors.name || errors.email) return;
-    const user = addClientUser(client.id, { name: name.trim(), title: title.trim(), email: email.trim(), phone: phone.trim() });
+    if (errors.name || errors.email || errors.cats) return;
+    const user = addClientUser(client.id, { name: name.trim(), title: title.trim(), email: email.trim(), phone: phone.trim(), categories: CATEGORIES.filter((c) => cats.includes(c)) });
     toast(`${user.name} added to ${client.name}`);
     close();
   };
@@ -598,7 +662,6 @@ function AddClientUserDialog({ clientId }: { clientId: string }) {
   return (
     <Modal
       title="Add client user"
-      description={`Someone at ${client.name} who can raise tickets.`}
       onClose={close}
       footer={
         <>
@@ -628,6 +691,18 @@ function AddClientUserDialog({ clientId }: { clientId: string }) {
         <Field label="Phone" htmlFor="au-phone" optional>
           <input id="au-phone" type="tel" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62 812 0000 0000" />
         </Field>
+        <div className="span-2">
+          <Field label="Can raise" htmlFor="au-cats" error={submitted ? errors.cats : ''}>
+            <div className="cat-checks" id="au-cats" role="group" aria-label="Categories they can raise">
+              {CATEGORIES.map((c) => (
+                <label key={c} className="cat-check">
+                  <input type="checkbox" checked={cats.includes(c)} onChange={(e) => setCats((x) => (e.target.checked ? [...x, c] : x.filter((y) => y !== c)))} />
+                  {CATEGORY_LABEL[c]}
+                </label>
+              ))}
+            </div>
+          </Field>
+        </div>
       </form>
     </Modal>
   );
@@ -690,7 +765,6 @@ function AddAssetDialog({ clientId }: { clientId: string }) {
   return (
     <Modal
       title="Add asset"
-      description={`An asset NXS builds or manages for ${client.name}.`}
       onClose={close}
       width={640}
       footer={
@@ -721,7 +795,7 @@ function AddAssetDialog({ clientId }: { clientId: string }) {
               </Field>
             </div>
             <div className="span-2">
-              <Field label="Handled by" htmlFor="aa-owner" hint="The NXS person on this project. New tickets go to them." error={submitted ? errors.owner : ''}>
+              <Field label="Handled by" htmlFor="aa-owner" error={submitted ? errors.owner : ''}>
                 <Select id="aa-owner" value={ownerId} onChange={setOwnerId} options={[{ value: '', label: 'Select a person' }, ...team.map((m) => ({ value: m.id, label: `${m.name}, ${m.title}` }))]} />
               </Field>
             </div>
@@ -747,7 +821,6 @@ function AddAssetDialog({ clientId }: { clientId: string }) {
           <h3 id="aa-check-title" className="form-block-title">
             Live status check
           </h3>
-          <p className="form-block-sub">The status updates on its own from this check.</p>
 
           <div className="choice-cards" role="radiogroup" aria-label="Check method">
             {MONITOR_METHODS.map((m) => {

@@ -2701,7 +2701,9 @@ button.view-tab.is-active {
   color: inherit;
 }
 .filter-chip-label {
-  color: rgba(81, 0, 122, 0.7);
+  /* The chip's own ink, softer: reads in light and dark alike. */
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-weight: 500;
 }
 .filter-chip-main strong {
   font-weight: 600;
@@ -2798,8 +2800,11 @@ button.view-tab.is-active {
   margin: 0 4px 6px;
 }
 .filter-menu-options {
-  max-height: 300px;
+  /* Tall enough for every status (13) without scrolling; on a short screen it scrolls with a visible bar. */
+  max-height: min(480px, calc(100vh - 220px));
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .filter-menu-option.is-selected {
   background: var(--purple-subtle);
@@ -3712,8 +3717,6 @@ button.barlist-row:hover {
   flex-direction: column;
   gap: 9px;
   margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
   font-size: 13.5px;
 }
 .board-props > div {
@@ -3758,8 +3761,6 @@ button.barlist-row:hover {
   justify-content: space-between;
   gap: 8px;
   margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
 }
 .board-card-foot .sla {
   min-width: 0;
@@ -6448,16 +6449,22 @@ button.barlist-row:hover {
   height: 100dvh;
   min-height: 600px;
   padding: 16px;
-  background: #3a0475 url('./assets/background.png') 72% center / cover no-repeat;
+  /* The app's dark page: plum in the top corners, violet light from the lower right. */
+  background:
+    radial-gradient(ellipse 95% 115% at 104% 96%, rgba(132, 22, 214, 0.78) 0%, rgba(118, 18, 194, 0.7) 14%, rgba(92, 11, 156, 0.58) 28%, rgba(60, 6, 104, 0.5) 44%, rgba(36, 3, 66, 0.32) 60%, rgba(18, 1, 34, 0.12) 74%, rgba(3, 1, 8, 0) 86%),
+    radial-gradient(ellipse 95% 42% at 12% 0%, rgba(40, 3, 80, 1) 0%, rgba(30, 2, 60, 0.75) 38%, rgba(14, 1, 30, 0.3) 68%, rgba(3, 1, 8, 0) 92%),
+    radial-gradient(ellipse 30% 34% at 100% 0%, rgba(40, 3, 80, 0.9) 0%, rgba(3, 1, 8, 0) 80%),
+    #030108;
 }
-/* A soft shade along the bottom, so the white line on the art stays readable. */
+/* The same faint grain as the app, so the gradient stays smooth. */
 .auth-frame::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
-  border-radius: inherit;
-  background: linear-gradient(to top, rgba(30, 0, 48, 0.82) 0%, rgba(30, 0, 48, 0.5) 22%, rgba(30, 0, 48, 0) 50%);
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
   pointer-events: none;
 }
 .auth-card {
@@ -6466,8 +6473,9 @@ button.barlist-row:hover {
   min-height: 0;
   padding: 32px 40px 28px;
   overflow-y: auto;
+  border: 1px solid #2a2638;
   border-radius: 22px;
-  background: var(--surface);
+  background: rgba(16, 14, 24, 0.86);
 }
 .auth-top {
   display: flex;
@@ -6626,9 +6634,16 @@ button.barlist-row:hover {
 .auth-art {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   padding: 40px 44px 36px;
   color: #fff;
+}
+/* The AI, on its own in the middle of the art, keeping an eye on the form. */
+.auth-art-bot {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
 }
 .auth-art-copy {
   max-width: 440px;
@@ -6651,9 +6666,6 @@ button.barlist-row:hover {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
     min-height: 100dvh;
-  }
-  .auth-frame::after {
-    display: none;
   }
   .auth-art {
     display: none;
@@ -6729,8 +6741,6 @@ button.barlist-row:hover {
   flex-direction: column;
   align-items: flex-start;
   margin-bottom: 32px;
-  padding-bottom: 28px;
-  border-bottom: 1px solid var(--border);
 }
 .portal-form-back {
   display: inline-flex;
@@ -6992,7 +7002,6 @@ button.barlist-row:hover {
   justify-content: flex-end;
   gap: 10px;
   padding-top: 20px;
-  border-top: 1px solid var(--border);
 }
 
 /* Ticket: the status beside the id, the review on top when it is the client's turn. */
@@ -11105,9 +11114,9 @@ span.avatar {
   border-top: 0;
 }
 .ticket-aside .props.is-rows.is-head {
+  border-bottom: 1px solid var(--border);
   margin-bottom: 14px;
   padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
 }
 .ticket-aside .ai-group {
   margin-block: 10px;
@@ -13236,7 +13245,7 @@ span.avatar {
 .fs-option {
   flex: 1 1 260px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 16px 18px;
   border: 1px solid var(--border);
@@ -13255,7 +13264,7 @@ span.avatar {
   flex: none;
   width: 18px;
   height: 18px;
-  margin: 2px 0 0;
+  margin: 0;
   accent-color: var(--purple);
 }
 .fs-option > span {
@@ -13505,9 +13514,9 @@ span.avatar {
 
 /* What went to the client, in the side column: a few lines each until opened. */
 .aside-sent {
+  border-top: 1px solid var(--border);
   margin-top: 18px;
   padding-top: 18px;
-  border-top: 1px solid var(--border);
 }
 .aside-sent-title {
   margin: 0 0 12px;
@@ -14068,7 +14077,6 @@ span.avatar {
   gap: 2px;
   margin: 0;
   padding: 16px 18px;
-  border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--ink) 4%, transparent);
   color: var(--ink);
   font-size: 14px;
@@ -15242,7 +15250,6 @@ span.avatar {
   padding: 14px 0;
 }
 .ovt-asset + .ovt-asset {
-  border-top: 1px solid var(--fg-rule);
 }
 .ovt-asset-head {
   display: flex;
@@ -15440,5 +15447,3930 @@ span.avatar {
   }
   .report-table .is-tight {
     white-space: normal;
+  }
+}
+
+/* ---------- Portal home card: one line of context, the title, then who and when ----------
+   Only the title is big and bold. The asset and ID are a small line above it;
+   who reported it and when sit in a quiet footer next to the button. */
+.pk-card {
+  gap: 10px;
+  padding: 14px 16px 12px;
+}
+.pk-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 26px;
+}
+.pk-card-top .pk-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+.pk-card-where {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+.pk-card-top .ticket-id {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.pk-card-top .badge {
+  flex: none;
+  margin-left: auto;
+  height: 24px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.pk-card .pk-card-title {
+  min-height: 2.8em;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pk-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--border);
+}
+.pk-card-foot .pk-card-next {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.pk-card-foot .btn {
+  flex: none;
+}
+
+/* ---------- Category: what a PIC can raise ----------
+   In Settings, one toggle per category on each PIC's row. In the new-ticket
+   form, the ones that PIC may raise as a choice of cards; with only one, it is
+   shown as already picked. */
+.cat-toggles {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cat-toggle {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.cat-toggle:hover {
+  border-color: var(--purple);
+  color: var(--ink);
+}
+.cat-toggle.is-on {
+  border-color: color-mix(in srgb, var(--purple) 55%, transparent);
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+  color: var(--purple-dark);
+  font-weight: 600;
+}
+:root[data-theme='dark'] .cat-toggle.is-on {
+  color: #e2a6ff;
+}
+.cat-toggle:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.cat-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+.cat-choices:focus {
+  outline: none;
+}
+.cat-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.cat-choice:hover {
+  border-color: color-mix(in srgb, var(--purple) 60%, var(--border-strong));
+}
+.cat-choice input {
+  flex: none;
+  margin-top: 0;
+  accent-color: var(--purple);
+}
+.cat-choice.is-on {
+  border-color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 8%, transparent);
+}
+.cat-choice.is-fixed {
+  cursor: default;
+}
+.cat-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cat-choice-text strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.cat-choice-text small {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.cat-none {
+  color: var(--muted);
+  font-size: 14px;
+}
+.cat-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.cat-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.cat-check input {
+  accent-color: var(--purple);
+}
+
+/* ---------- Focus view for the AI's work ----------
+   From the corner of an AI card: the same work, near full screen. The page
+   behind dims and blurs; the panel wears the AI card's aurora edge. The
+   document reads on the left with room; the conversation is a full-height
+   panel on the right, its composer at the foot. One column on narrow screens. */
+.ai-focus-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.ai-focus-btn:hover {
+  border-color: color-mix(in srgb, var(--purple) 55%, var(--border));
+  background: color-mix(in srgb, var(--purple) 10%, transparent);
+  color: var(--ink);
+}
+.ai-focus-btn:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.fs-card.is-away .fs-card-head {
+  margin-bottom: 8px;
+}
+.ai-focus-away {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.ai-focus {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  padding: 20px;
+}
+.ai-focus-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 6, 14, 0.62);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  animation: ai-focus-fade 0.18s ease-out;
+}
+:root:not([data-theme='dark']) .ai-focus-backdrop {
+  background: rgba(40, 20, 60, 0.28);
+}
+.ai-focus-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse 45% 55% at 0% 0%, var(--ai-card-glow) 0%, transparent 70%) padding-box,
+    linear-gradient(var(--ai-card-fill), var(--ai-card-fill)) padding-box,
+    var(--ai-card-edge) border-box;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.55);
+  animation: ai-focus-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ai-focus-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px 16px 26px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-focus-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.ai-focus-title h2 {
+  flex: none;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+}
+.ai-focus-title .ai-chip {
+  flex: none;
+}
+.ai-focus-context {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.ai-focus-head .ai-focus-btn {
+  margin-left: 0;
+}
+.ai-focus-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The card's content, laid out for focus: the document scrolls on the left, the chat stays put on the right. */
+.ai-card-content.is-focus {
+  height: 100%;
+}
+.ai-card-content.is-focus > .ns-fade {
+  display: grid;
+  /* The content and the chat at 5:4: the content gets the room, the chat sits beside it. */
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+  grid-auto-rows: max-content;
+  align-content: start;
+  height: 100%;
+  padding-bottom: 32px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ai-card-content.is-focus > .ns-fade > :not(.rca-chat) {
+  grid-column: 1;
+  /* Auto, not 100%: the RCA and fix tables set a full width that, with these margins, ran into the chat. */
+  width: auto;
+  min-width: 0;
+  margin: 24px 32px 0;
+}
+.ai-card-content.is-focus .rca-chat {
+  position: sticky;
+  top: 0;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* The panel's height, less its 20px margins and the 65px header. */
+  height: calc(100vh - 40px - 65px - 2px);
+  margin: 0;
+  padding: 20px;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.ai-card-content.is-focus .rca-thread {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+.ai-card-content.is-focus .rca-composer {
+  margin-top: auto;
+}
+.ai-card-content.is-focus .rca-me {
+  max-width: 88%;
+}
+/* The document gets the room: the RCA table and the diffs read wider. */
+.ai-card-content.is-focus .rca-block {
+  max-width: none;
+}
+@keyframes ai-focus-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985) translateY(6px);
+  }
+}
+@keyframes ai-focus-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-focus-panel,
+  .ai-focus-backdrop {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .ai-focus {
+    padding: 0;
+  }
+  .ai-focus-panel {
+    border-radius: 0;
+  }
+  .ai-focus-context {
+    display: none;
+  }
+  .ai-card-content.is-focus > .ns-fade {
+    display: block;
+  }
+  .ai-card-content.is-focus > .ns-fade > :not(.rca-chat) {
+    margin: 20px 16px 0;
+  }
+  .ai-card-content.is-focus .rca-chat {
+    position: static;
+    height: auto;
+    margin: 24px 16px 0;
+    padding: 16px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    background: none;
+  }
+}
+
+/* QA's proof note, above its screenshots, in a release row. */
+.fs-proof-note {
+  margin: 0 0 10px;
+}
+.fs-proof-note:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- Code fix: a summary to read, then a preview of the diff ----------
+   The summary says what the fix does, what changed in each file and where, as
+   text. The diff shows the first files and the first lines of each, fading
+   out; the whole of it is a click away on GitHub. */
+.fix-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+  transition: opacity 0.2s;
+}
+.fix-summary.is-rewriting {
+  opacity: 0.55;
+}
+.fix-summary h4 {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.fix-summary p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.fix-summary code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  font-size: 12.5px;
+}
+.fix-summary .fix-summary-where {
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.fix-files-head {
+  flex-wrap: wrap;
+}
+.fix-files-preview {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.fix-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  text-decoration: none;
+}
+.fix-diff-wrap {
+  position: relative;
+}
+/* A cut-off diff fades at the foot, so it reads as a preview, not the end. */
+.fix-diff-wrap.is-cut .fix-diff {
+  margin-bottom: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+  mask-image: linear-gradient(180deg, #000 70%, transparent);
+}
+.fix-diff-more {
+  display: block;
+  margin: 4px 18px 14px 43px;
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+:root[data-theme='dark'] .fix-diff-more,
+:root[data-theme='dark'] .fix-files-more {
+  color: #e2a6ff;
+}
+.fix-diff-more:hover,
+.fix-files-more:hover {
+  text-decoration: underline;
+}
+.fix-files-more {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  color: var(--purple);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.fix-summary-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+}
+.fix-summary-files li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.fix-summary-files li code {
+  flex: none;
+}
+.fix-summary-files li.is-more {
+  color: var(--muted);
+}
+
+/* ---------- The step bar: the line on the left, the buttons beside it ----------
+   Long lines wrap on the left; the buttons never drop to their own line, as
+   in every other step. Only on a phone do they stack. */
+.fs-bar {
+  flex-wrap: nowrap;
+}
+.fs-bar-next {
+  flex: 1;
+  min-width: 0;
+}
+.fs-bar-actions {
+  flex: none;
+  flex-wrap: nowrap;
+}
+@media (max-width: 640px) {
+  .fs-bar {
+    flex-wrap: wrap;
+  }
+  .fs-bar-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------- When the step moves on while you watch ----------
+   The page goes back to the top (in code), the new step slides in, the stage
+   it reached pulses once, and a toast says where it went and who has it. */
+.fs-step.is-entering > .fs {
+  animation: fs-step-in 0.38s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tdl-stage.is-arrived {
+  animation: stage-arrived 1.6s ease-out;
+}
+@keyframes fs-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes stage-arrived {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--purple) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--purple) 0%, transparent);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+/* A card dropped on the board glows where it landed. */
+.board-card.is-landed {
+  animation: card-landed 1.8s ease-out;
+}
+@keyframes card-landed {
+  0%,
+  30% {
+    border-color: var(--purple);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 30%, transparent);
+  }
+}
+
+/* The client's timeline: the newest entry slides in after something changed. */
+.pt-tl-wrap.is-fresh .pt-tl-item:first-child {
+  animation: fs-step-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fs-step.is-entering > .fs,
+  .tdl-stage.is-arrived,
+  .board-card.is-landed,
+  .pt-tl-wrap.is-fresh .pt-tl-item:first-child {
+    animation: none;
+  }
+}
+
+/* ---------- Toasts: top right, one look, four tones ----------
+   Under the header, newest on top. A card in the page's own surface with a
+   coloured edge and icon: green for done, red for failed, amber for something
+   to look at, blue for a change to know about. On a phone they span the width. */
+.toasts {
+  top: 84px;
+  right: 24px;
+  bottom: auto;
+  left: auto;
+  z-index: 400;
+  width: min(400px, calc(100vw - 24px));
+  gap: 10px;
+  pointer-events: none;
+}
+.toast {
+  --toast-c: var(--green-solid);
+  position: relative;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: none;
+  padding: 12px 10px 12px 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--menu-bg, var(--surface));
+  color: var(--ink);
+  box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+  animation: toast-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.toast::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--toast-c);
+}
+.toast.is-error {
+  --toast-c: var(--red-solid);
+}
+.toast.is-warning {
+  --toast-c: var(--orange-solid);
+}
+.toast.is-info {
+  --toast-c: #4b6bff;
+}
+:root[data-theme='dark'] .toast.is-success {
+  --toast-c: #22b07c;
+}
+:root[data-theme='dark'] .toast.is-info {
+  --toast-c: #7d95ff;
+}
+.toast .toast-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--toast-c) 16%, transparent);
+  color: var(--toast-c);
+}
+.toast .toast-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 3px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.toast .toast-link {
+  flex: none;
+  padding-top: 3px;
+  color: var(--purple);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+:root[data-theme='dark'] .toast .toast-link {
+  color: #e2a6ff;
+}
+.toast .toast-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 0;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.toast .toast-close:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+@media (max-width: 640px) {
+  .toasts {
+    top: 72px;
+    right: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* ---------- Settings: a rail of modules, one panel at a time ----------
+   The rail stays put while you scroll; the panel shows only the module you're
+   in. Settings read as rows: what it is on the left, its control on the right,
+   divided by hairlines. Lists (team, portal users, assets) are rows too. */
+.st {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.st-nav {
+  position: sticky;
+  top: 96px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 12px 14px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 22px;
+  background: var(--fg-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.st-nav-title {
+  margin: 0;
+  padding: 0 12px 6px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+}
+.st-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.st-nav-label {
+  margin: 0;
+  padding: 16px 12px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: var(--ink-2);
+  font-size: 14.5px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.12s, color 0.12s;
+}
+.st-nav-item svg {
+  flex: none;
+  color: var(--muted);
+}
+.st-nav-item:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
+  text-decoration: none;
+}
+.st-nav-item.is-active {
+  background: color-mix(in srgb, var(--purple) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--purple) 32%, transparent);
+  color: #f3dcff;
+}
+.st-nav-item.is-active svg {
+  color: #e2a6ff;
+}
+.st-nav-item:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+
+.st-panel {
+  min-width: 0;
+  min-height: calc(100vh - 150px);
+  padding: 28px 32px 32px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse 55% 40% at 100% 0%, rgba(193, 31, 255, 0.07), transparent 70%),
+    var(--fg-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  animation: st-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes st-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.st-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.st-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+}
+.st-count {
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 15px;
+  font-weight: 500;
+}
+.st-about {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.st-head-actions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+}
+
+/* Rows: label and hint on the left, the control on the right. */
+.st-rows {
+  display: flex;
+  flex-direction: column;
+}
+.st-row {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.st-row:last-child {
+  border-bottom: 0;
+}
+.st-row-label label,
+.st-row-label span {
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.st-row-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.st-row-hint .field-error {
+  font-weight: 500;
+}
+.st-row-control {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.st-row-control > .input {
+  width: min(420px, 100%);
+}
+.st-value {
+  color: var(--ink-2);
+  font-size: 14.5px;
+}
+.st-value.is-muted {
+  color: var(--muted);
+}
+.st-photo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.st-photo .avatar {
+  margin-right: 6px;
+}
+.st-savebar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 10px 12px 10px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: rgba(22, 19, 32, 0.92);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.6);
+  animation: st-in 0.22s ease-out;
+}
+.st-savebar > span {
+  flex: 1;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.st-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Search and the client filter, above a list. */
+.st-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 6px;
+}
+.st-search {
+  width: min(300px, 100%);
+}
+.st-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.st-chip:hover {
+  border-color: color-mix(in srgb, var(--purple) 50%, var(--border-strong));
+  color: var(--ink);
+}
+.st-chip.is-on {
+  border-color: color-mix(in srgb, var(--purple) 55%, transparent);
+  background: color-mix(in srgb, var(--purple) 16%, transparent);
+  color: #f3dcff;
+  font-weight: 600;
+}
+
+/* Lists: one row per person or asset. */
+.st-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-item {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.st-item:last-child {
+  border-bottom: 0;
+}
+.st-item-main {
+  min-width: 0;
+}
+.st-item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.st-item-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.st-you {
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--purple) 18%, transparent);
+  color: #e2a6ff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.st-role {
+  color: var(--ink-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.st-member {
+  grid-template-columns: 36px minmax(0, 1.2fr) minmax(0, 1.3fr) 120px 170px;
+}
+.st-member-work {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+.st-load {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.st-crew {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.st-crew-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px 0 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.st-avail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.st-avail-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.st-avail-dot.is-available {
+  background: #22b07c;
+}
+.st-avail-dot.is-busy {
+  background: var(--orange-solid);
+}
+.st-avail-dot.is-away {
+  background: var(--yellow-solid);
+}
+
+.st-user {
+  grid-template-columns: 36px minmax(0, 1.2fr) 150px 100px minmax(0, 1.3fr);
+}
+.st-user-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+.st-user-raise {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.st-mini-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.st-asset {
+  grid-template-columns: 36px minmax(0, 1.5fr) 150px 190px 140px;
+}
+.st-asset-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--purple) 13%, transparent);
+  color: #e2a6ff;
+}
+.st-asset-owner {
+  min-width: 0;
+  font-size: 13.5px;
+}
+.st-asset-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.st-asset-state small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Clients: one card each, with who at NXS runs it. */
+.st-clients {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.st-client {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.st-client-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+}
+.st-client-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+}
+.st-client-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.st-client-open {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.st-client-crew {
+  display: flex;
+  flex-direction: column;
+}
+.st-crew-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.st-crew-label {
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.st-crew-label small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.st-client-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.st-client-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: border-color 0.12s, color 0.12s;
+}
+.st-client-link:hover {
+  border-color: color-mix(in srgb, var(--purple) 55%, var(--border-strong));
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* "Add …" when a client hasn't been picked: which one? */
+.st-add {
+  position: relative;
+}
+.st-add-menu {
+  top: calc(100% + 8px);
+  right: 0;
+  left: auto;
+  width: 240px;
+  padding: 6px;
+}
+.st-add-title {
+  margin: 0;
+  padding: 8px 10px 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.st-add-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.st-add-item:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.st-empty {
+  padding: 36px 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+@media (max-width: 1080px) {
+  .st-clients {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-member,
+  .st-user,
+  .st-asset {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+  }
+  .st-member-work,
+  .st-user-client,
+  .st-asset-owner,
+  .st-role {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .st {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  /* The rail becomes one row of modules that scrolls sideways. */
+  .st-nav {
+    position: static;
+    flex-direction: row;
+    gap: 6px;
+    padding: 8px;
+    overflow-x: auto;
+    border-radius: 18px;
+    scrollbar-width: none;
+  }
+  .st-nav-title,
+  .st-nav-label {
+    display: none;
+  }
+  .st-nav-group {
+    flex-direction: row;
+    gap: 6px;
+  }
+  .st-nav-item {
+    flex: none;
+    height: 38px;
+  }
+  .st-panel {
+    padding: 20px 16px 24px;
+  }
+  .st-head {
+    flex-direction: column;
+  }
+  .st-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .st-row-control {
+    justify-content: flex-start;
+  }
+  .st-row-control > .input {
+    width: 100%;
+  }
+  .st-crew-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .st-user-raise {
+    grid-column: 2 / -1;
+    align-items: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-panel,
+  .st-savebar {
+    animation: none;
+  }
+}
+
+/* ---------- One hierarchy for ticket cards (Overview and the Client Portal) ----------
+   The title is the one bold, bright line. The ticket ID and where it lives are
+   a quiet line above it, the status a badge in the corner; who and when sit in
+   the footer in regular weight, and a deadline only takes colour when it's close. */
+.ovt-card .ticket-id,
+.pk-card .ticket-id {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+/* The ID keeps its purple, a step lighter than the title. */
+:root[data-theme] .ovt-card .ticket-id,
+:root[data-theme] .pk-card .ticket-id {
+  font-weight: 600;
+}
+.ovt-card-where {
+  font-weight: 400;
+}
+.ovt-card-top .badge {
+  font-weight: 500;
+}
+.ovt-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: -0.005em;
+}
+.ovt-card-who {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.ovt-card-do,
+.ovt-card-do.is-mine {
+  color: var(--muted);
+  font-weight: 400;
+}
+.ovt-card-do.is-mine {
+  color: var(--ink-2);
+}
+.ovt-card-do.is-blocked {
+  color: var(--orange-solid);
+}
+.ovt-card-due strong {
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.ovt-card.is-soon .ovt-card-due strong,
+.ovt-card.is-late .ovt-card-due strong {
+  font-weight: 600;
+}
+
+.pk-card-where {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.pk-card-top .badge {
+  font-weight: 500;
+}
+.pk-card .pk-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.pk-card-foot .pk-card-next {
+  color: var(--muted);
+  font-weight: 400;
+}
+.pk-card-foot .btn {
+  font-weight: 500;
+}
+
+/* Overview cards, a clearer ladder: the title in white and heaviest; the ID in
+   purple; where it lives quiet; in the footer, who in white, what in soft grey,
+   and the time left as a firm figure over a quiet "due" line. */
+.ovt-card-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: #fff;
+}
+.ovt-card-who {
+  color: var(--ink);
+  font-weight: 600;
+}
+.ovt-card-do {
+  color: var(--ink-2);
+}
+.ovt-card-do.is-mine {
+  color: var(--ink);
+  font-weight: 500;
+}
+.ovt-card-due strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.ovt-card-due small {
+  color: var(--muted);
+}
+.ovt-card-top .badge,
+.pk-card-top .badge {
+  gap: 5px;
+}
+
+/* ---------- Settings, calmer: space instead of lines ----------
+   No rule under the heading; a profile reads as a card of who you are, then
+   a card of fields; lists are soft rows with space between, not hairlines. */
+.st-head {
+  padding-bottom: 0;
+  margin-bottom: 24px;
+  border-bottom: 0;
+}
+.st-toolbar {
+  margin: 0 0 14px;
+}
+.st-identity {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 16px;
+  padding: 22px 24px;
+  border: 1px solid color-mix(in srgb, var(--purple) 22%, var(--fg-glass-line));
+  border-radius: 18px;
+  background: radial-gradient(ellipse 70% 120% at 0% 0%, rgba(193, 31, 255, 0.12), transparent 70%), color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.st-identity-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.st-identity-name {
+  margin: 0;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+}
+.st-identity-sub {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.st-identity-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 260px;
+}
+.st-identity-hint,
+.st-identity-actions .field-error {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+.st-identity-actions .field-error {
+  color: var(--red);
+}
+.st-card {
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.st-card + .st-card {
+  margin-top: 16px;
+}
+.st-card-title {
+  margin: 0 0 18px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.st-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Lists: soft rows with space between them. */
+.st-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-item,
+.st-item:last-child {
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.st-item:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
+}
+
+/* Clients: who they are, then three numbers that each open their list. */
+.st-client {
+  gap: 18px;
+}
+.st-client-head {
+  padding-bottom: 0;
+}
+.st-client-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.st-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.st-stat:hover {
+  border-color: color-mix(in srgb, var(--purple) 45%, transparent);
+  background: color-mix(in srgb, var(--purple) 9%, transparent);
+  text-decoration: none;
+}
+.st-stat strong {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+.st-stat span {
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .st-identity {
+    flex-wrap: wrap;
+  }
+  .st-identity-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+  .st-identity-hint {
+    text-align: left;
+  }
+}
+
+/* ---------- Board: a ticket's step beside the board ----------
+   From the right, over a dimmed and blurred board, wearing the AI card's
+   aurora edge. The stage bar on top, then the same step as on the ticket
+   page; its own bar sticks to the foot of the panel. */
+.board-card:not(.is-static) {
+  cursor: pointer;
+}
+button.board-card-title {
+  width: 100%;
+  color: var(--ink);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.peek {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: flex-end;
+}
+.peek-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 6, 14, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  animation: ai-focus-fade 0.2s ease-out;
+}
+.peek-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100vw);
+  height: 100%;
+  border: 1px solid transparent;
+  border-right: 0;
+  border-radius: 22px 0 0 22px;
+  background:
+    radial-gradient(ellipse 60% 30% at 0% 0%, var(--ai-card-glow) 0%, transparent 70%) padding-box,
+    linear-gradient(var(--ai-card-fill), var(--ai-card-fill)) padding-box,
+    var(--ai-card-edge) border-box;
+  box-shadow: -30px 0 80px -30px rgba(0, 0, 0, 0.7);
+  animation: peek-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.peek-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 20px 16px 28px;
+  border-bottom: 1px solid var(--border);
+}
+.peek-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.peek-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.peek-meta .badge {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.peek-title {
+  margin: 6px 0 0;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.peek-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.peek-tools .ai-focus-btn {
+  margin-left: 0;
+}
+.peek-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.peek-body > .tdl-stages {
+  margin: 18px 28px 0;
+}
+.peek-intent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 28px 0;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--purple) 45%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--purple) 12%, transparent);
+  color: var(--ink);
+  font-size: 14px;
+}
+.peek-intent svg {
+  flex: none;
+  color: #e2a6ff;
+}
+.peek-intent strong {
+  font-weight: 600;
+}
+.peek-body .fs {
+  padding-top: 22px;
+}
+.peek-body .main-block {
+  margin: 22px 28px;
+}
+@keyframes peek-in {
+  from {
+    transform: translateX(48px);
+    opacity: 0;
+  }
+}
+@media (max-width: 900px) {
+  .peek-panel {
+    border-radius: 0;
+  }
+  .peek-head {
+    padding: 14px 12px 12px 16px;
+  }
+  .peek-body > .tdl-stages,
+  .peek-intent {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+  .peek-body .fs {
+    margin: 0 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .peek-panel,
+  .peek-backdrop {
+    animation: none;
+  }
+}
+/* In the panel the eight stages keep their width and scroll sideways; the current one is brought into view. */
+.peek .tdl-stages {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.peek .tdl-stage {
+  flex: 0 0 auto;
+  min-width: 118px;
+}
+.peek .tdl-stage-name span {
+  white-space: nowrap;
+}
+/* While a panel is open, toasts sit beside it instead of over its head. */
+body:has(.peek) .toasts {
+  right: calc(min(860px, 100vw) + 16px);
+}
+@media (max-width: 1240px) {
+  body:has(.peek) .toasts {
+    right: 24px;
+    top: auto;
+    bottom: 24px;
+  }
+}
+
+/* ---------- Overview cards, with some life ----------
+   A faint glow in the status colour from the top corner, a client logo by the
+   asset, the step on your own cards as the thing to do (a purple strip with an
+   arrow), and a ring beside the time left that fills as the SLA runs down. */
+.ovt-column {
+  --ovt-card-h: 156px;
+}
+.ovt-card {
+  position: relative;
+  grid-template-rows: 22px 40px auto;
+  row-gap: 10px;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--tone-solid, var(--border)) 18%, var(--fg-rule));
+  background:
+    radial-gradient(ellipse 60% 90% at 100% 0%, color-mix(in srgb, var(--tone-solid, transparent) 13%, transparent), transparent 70%),
+    var(--fg-table);
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.ovt-card:hover {
+  border-color: color-mix(in srgb, var(--purple) 70%, transparent);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -18px rgba(193, 31, 255, 0.55);
+}
+.ovt-card-top {
+  gap: 8px;
+}
+.ovt-card-top .client-logo {
+  flex: none;
+  border-radius: 6px;
+}
+.ovt-card-where {
+  flex: 0 1 auto;
+  color: var(--ink-2);
+}
+.ovt-card-top .ticket-id {
+  flex: none;
+}
+.ovt-card-foot {
+  align-items: center;
+  padding-top: 0;
+  border-top: 0;
+}
+/* Your own card: the step is the thing to do. */
+.ovt-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--purple) 40%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+  color: #f3dcff;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ovt-card-action svg {
+  flex: none;
+  color: #e2a6ff;
+}
+.ovt-card-go {
+  margin-left: 2px;
+  transition: transform 0.15s;
+}
+.ovt-card:hover .ovt-card-go {
+  transform: translateX(3px);
+}
+.ovt-card-action.is-blocked {
+  border-color: color-mix(in srgb, var(--orange-solid) 45%, transparent);
+  background: color-mix(in srgb, var(--orange-solid) 13%, transparent);
+  color: #ffd9ad;
+}
+.ovt-card-action.is-blocked svg {
+  color: var(--orange-solid);
+}
+/* Someone else's card: who, and under it what they're doing. */
+.ovt-card-step {
+  gap: 10px;
+}
+.ovt-card-who-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.ovt-card-who-wrap .ovt-card-who {
+  font-size: 13.5px;
+}
+.ovt-card-who-wrap .ovt-card-do {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.ovt-card-who-wrap .ovt-card-do.is-blocked {
+  color: var(--orange-solid);
+}
+/* Time left, with a ring for how much of the clock is spent. */
+.ovt-card-due {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.ovt-card-due-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.ovt-ring {
+  flex: none;
+}
+.ovt-ring-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--ink) 12%, transparent);
+  stroke-width: 3;
+}
+.ovt-ring-fill {
+  fill: none;
+  stroke: #c94dff;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+.ovt-ring.is-soon .ovt-ring-fill {
+  stroke: var(--orange-solid);
+}
+.ovt-ring.is-late .ovt-ring-fill {
+  stroke: var(--red-solid);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ovt-card,
+  .ovt-card:hover {
+    transform: none;
+  }
+}
+
+/* ---------- Client Portal cards, with some life (as on the Overview) ----------
+   A faint glow in the stage's colour, the whole card opens the ticket (the
+   title's link stretches over it) and lifts a little on hover. The footer
+   says who reported it, then what comes next: the date NXS works to with its
+   ring, the approval waiting on them, or when it went live. */
+.pk-card {
+  position: relative;
+  border-color: color-mix(in srgb, var(--tone-solid, var(--border)) 18%, var(--fg-glass-line, var(--border)));
+  background:
+    radial-gradient(ellipse 60% 90% at 100% 0%, color-mix(in srgb, var(--tone-solid, transparent) 13%, transparent), transparent 70%),
+    var(--fg-glass, var(--surface));
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.pk-card:hover {
+  border-color: color-mix(in srgb, var(--purple) 70%, transparent);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -18px rgba(193, 31, 255, 0.55);
+}
+.pk-card.is-ready {
+  border-color: color-mix(in srgb, var(--yellow-solid) 40%, transparent);
+}
+a.pk-card-title {
+  color: var(--ink);
+  text-decoration: none;
+}
+a.pk-card-title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+a.pk-card-title:focus-visible {
+  outline: none;
+}
+.pk-card:has(a.pk-card-title:focus-visible) {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.pk-card .pk-card-foot {
+  padding-top: 4px;
+  border-top: 0;
+}
+.pk-card-by {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pk-card-by-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.pk-card-by-name {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.pk-card-by-when {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+/* What's on top of the stretched link stays clickable. */
+.pk-card-approve {
+  position: relative;
+  z-index: 1;
+  gap: 6px;
+}
+.pk-card-due strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.pk-card-due small {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.pk-card-closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #5ad6a6;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pk-card-closed.is-canceled {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pk-card,
+  .pk-card:hover {
+    transform: none;
+  }
+}
+
+/* ---------- Settings as one container ----------
+   One glass box: the modules on a slightly darker rail on the left, the one
+   you're in on the right, with no box of its own. */
+.st {
+  gap: 0;
+  align-items: stretch;
+  min-height: calc(100vh - 150px);
+  overflow: hidden;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 24px;
+  background:
+    radial-gradient(ellipse 45% 35% at 100% 0%, rgba(193, 31, 255, 0.08), transparent 70%),
+    var(--fg-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.st-nav {
+  position: static;
+  padding: 24px 14px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: rgba(10, 8, 16, 0.35);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.st-panel {
+  min-height: 0;
+  padding: 30px 36px 36px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Clients: each card opens the client. */
+a.st-client {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+a.st-client:hover {
+  border-color: color-mix(in srgb, var(--purple) 60%, transparent);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -18px rgba(193, 31, 255, 0.5);
+  text-decoration: none;
+}
+.st-client-go {
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 0.15s, color 0.15s;
+}
+a.st-client:hover .st-client-go {
+  color: #e2a6ff;
+  transform: translateX(3px);
+}
+.st-client .st-stat {
+  pointer-events: none;
+}
+
+/* A client's page: back, who they are, then their people and their assets. */
+.st-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.st-back:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+.st-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 20px;
+  padding: 22px 24px;
+  border: 1px solid color-mix(in srgb, var(--purple) 22%, var(--fg-glass-line));
+  border-radius: 18px;
+  background: radial-gradient(ellipse 70% 120% at 0% 0%, rgba(193, 31, 255, 0.12), transparent 70%), color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.st-brand .client-logo {
+  border-radius: 16px;
+}
+.st-brand-main {
+  flex: 1;
+  min-width: 0;
+}
+.st-brand-main .st-about {
+  margin-top: 4px;
+}
+.st-brand-stat {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 12px 14px 12px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+.st-brand-stat:hover {
+  border-color: color-mix(in srgb, var(--purple) 60%, transparent);
+  text-decoration: none;
+}
+.st-brand-stat strong {
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.1;
+}
+.st-brand-stat span {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.st-brand-stat svg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--muted);
+}
+.st-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.st-card-head .st-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+.st-card-head .st-count {
+  font-size: 13.5px;
+}
+.st-card-about {
+  margin: 4px 0 16px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.st-user {
+  grid-template-columns: 36px minmax(0, 1fr) 110px auto;
+}
+.st-asset {
+  grid-template-columns: 36px minmax(0, 1.4fr) 200px 140px;
+}
+@media (max-width: 900px) {
+  .st {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .st-panel {
+    padding: 20px 16px 24px;
+  }
+  .st-brand {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------- Comment threads, like the comments under a video ----------
+   A comment that starts a thread, its replies one step in. A thin line runs
+   from the first avatar down past the replies, so the thread reads as one.
+   NXS people carry a purple "NXS Support" tag by their own name and photo. */
+.ct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ct-thread {
+  position: relative;
+}
+.ct-thread.has-replies::before {
+  content: '';
+  position: absolute;
+  top: 40px;
+  bottom: 18px;
+  left: 15px;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.ct-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ct-item > .avatar {
+  flex: none;
+  position: relative;
+  z-index: 1;
+}
+.ct-body {
+  flex: 1;
+  min-width: 0;
+}
+.ct-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 13px;
+}
+.ct-name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.ct-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.ct-tag.is-nxs {
+  background: color-mix(in srgb, var(--purple) 18%, transparent);
+  color: #e2a6ff;
+}
+.ct-meta time {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ct-to {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ct-text {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.ct-reply-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 3px 8px 3px 6px;
+  margin-left: -6px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background-color 0.12s, color 0.12s;
+}
+.ct-reply-btn:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+.ct-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 0 44px;
+  padding: 0;
+  list-style: none;
+}
+.ct-item.is-reply .ct-name {
+  font-size: 13.5px;
+}
+.ct-item.is-reply .ct-text {
+  font-size: 14px;
+}
+.ct-compose {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ct-compose > :first-child {
+  width: 100%;
+}
+
+/* The first reply, as a message: who sent it, then what it says. */
+.pt-msg {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.pt-msg > .avatar {
+  flex: none;
+}
+.pt-msg-body {
+  flex: 1;
+  min-width: 0;
+}
+.pt-msg-text {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+@media (max-width: 640px) {
+  .ct-replies {
+    margin-left: 22px;
+  }
+  .ct-thread.has-replies::before {
+    display: none;
+  }
+}
+
+/* ---------- The step's bar lives inside its card ----------
+   No box of its own: the last row of the card above, under a hairline, with
+   the line on the left and the buttons on the right. The questions ("Does it
+   happen?", "Does the fix work?") get a card of their own to hold it. */
+.fs-card > .fs-bar,
+.fs-plain > .fs-bar,
+.fs-choice > .fs-bar {
+  position: static;
+  margin-top: 22px;
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fs-choice {
+  padding: 22px 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+.fs-choice > legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 2px;
+}
+.fs-choice > legend + * {
+  clear: both;
+}
+/* A category this PIC may not raise: shown, but out of reach. */
+.cat-choice.is-off {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.cat-choice.is-off:hover {
+  border-color: var(--border-strong);
+}
+
+/* ---------- The Initial RCA Report, opened from the aside ----------
+   A button under the deadline; the rule moves under it. */
+.ticket-aside .props.is-head:has(+ .aside-rca) {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.aside-rca {
+  margin-bottom: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.aside-rca-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+.aside-rca-open {
+  margin-left: auto;
+  color: var(--muted);
+}
+/* The sent report has no chat beside it: one column. */
+.ai-card-content.is-focus > .ns-fade.is-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Who sent the Initial RCA Report, in the focus view's header. */
+.ai-focus-sent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+.ai-focus-sent svg {
+  color: var(--green);
+}
+
+/* ---------- New ticket: the screen recording of the incident ---------- */
+.video-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.video-drop:hover {
+  border-color: color-mix(in srgb, var(--purple) 45%, var(--border-strong));
+}
+.video-drop.is-dragging {
+  border-color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 8%, var(--surface));
+}
+.video-drop.is-invalid {
+  border-color: var(--red);
+}
+.video-drop-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 18px 12px;
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: center;
+}
+.video-drop-choose:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.video-drop.has-files .video-drop-pick {
+  min-height: 0;
+  padding: 8px;
+}
+.video-drop-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted);
+  transition: color 0.12s ease;
+}
+.video-drop.has-files .video-drop-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.video-drop-pick:hover .video-drop-icon,
+.video-drop.is-dragging .video-drop-icon {
+  color: var(--ink);
+}
+.video-drop-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.video-drop-text strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.video-drop-text small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.video-drop.has-files .video-drop-text small {
+  display: none;
+}
+.video-drop-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+.video-drop-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 6px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.video-drop-thumb {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 50px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0b0b12;
+  color: #fff;
+}
+.video-drop-thumb video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.video-drop-thumb svg {
+  position: relative;
+  padding: 5px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+}
+.video-drop-meta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.video-drop-meta small {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.video-drop-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.video-drop-line strong {
+  font-weight: 500;
+}
+.video-drop-pick > small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.video-drop-line svg {
+  color: var(--muted);
+}
+.video-drop-pick {
+  cursor: pointer;
+}
+.video-drop-choose {
+  margin-top: 8px;
+}
+.video-drop-pick.is-add:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+/* The automatic first reply's sign-off. */
+.pt-msg-sign {
+  margin-top: 8px;
+  color: var(--muted);
+}
+/* The issue check's earlier notes, in the same box as the question, above it. */
+.fs-choice-notes {
+  margin-bottom: 24px;
+}
+.fs-choice-notes .fs-plain-title {
+  margin-bottom: 12px;
+}
+
+/* ---------- Code fix: the pull request, then what it does and touches ---------- */
+.pr-card,
+.fix-read {
+  transition: opacity 0.2s;
+}
+.pr-card.is-rewriting,
+.fix-read.is-rewriting {
+  opacity: 0.55;
+}
+.pr-card {
+  margin-bottom: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.pr-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+}
+.pr-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8f6bff, #c94dff);
+  color: #fff;
+}
+.pr-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.pr-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pr-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pr-meta code {
+  font-size: 12.5px;
+}
+.pr-link,
+.fix-areas-foot a,
+.fix-pkg-foot a {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--purple-dark);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.pr-link:hover,
+.fix-areas-foot a:hover,
+.fix-pkg-foot a:hover {
+  text-decoration: underline;
+}
+.pr-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+.pr-stats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 14px 8px;
+}
+.pr-stats > div + div {
+  border-left: 1px solid var(--border);
+}
+.pr-stats dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+.pr-stats dt {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.fix-read {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+.fix-sec h4 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.fix-sec > p {
+  color: var(--ink);
+  line-height: 1.6;
+}
+.fix-sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.fix-sec-head h4 {
+  margin: 0;
+}
+.fix-sec-head .muted {
+  font-size: 12.5px;
+}
+.fix-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 18px;
+  list-style: disc;
+  color: var(--ink);
+  line-height: 1.55;
+}
+.fix-changes li::marker {
+  color: var(--purple);
+}
+.fix-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fix-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.fix-know {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.fix-know-title {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.fix-know ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+.fix-know li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.fix-know li svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.fix-areas {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  list-style: none;
+  overflow: hidden;
+}
+.fix-areas li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 14px;
+  transition: background-color 0.3s;
+}
+.fix-areas li + li {
+  border-top: 1px solid var(--border);
+}
+.fix-areas li.is-changed {
+  background: color-mix(in srgb, var(--purple) 12%, transparent);
+}
+.fix-areas li > svg {
+  flex: none;
+  color: var(--muted);
+}
+.fix-areas code {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+.fix-area-count {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.fix-area-bar {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  width: 64px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.fix-area-bar .is-add {
+  background: var(--green);
+}
+.fix-area-bar .is-del {
+  background: var(--red);
+}
+.fix-areas li.fix-areas-foot {
+  justify-content: space-between;
+  font-size: 13px;
+}
+.fix-packages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+.fix-packages > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+.fix-pkg-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.fix-pkg-name svg {
+  color: var(--muted);
+}
+.fix-pkg-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.fix-pkg-versions code {
+  color: var(--ink);
+  font-weight: 600;
+}
+.fix-pkg-versions code.is-latest {
+  color: var(--purple-dark);
+}
+.fix-pkg-note {
+  color: var(--ink);
+  line-height: 1.5;
+}
+.fix-pkg-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+@media (max-width: 560px) {
+  .fix-area-bar {
+    display: none;
+  }
+}
+/* A canceled ticket's check trail, under the brief. */
+.cancel-trail {
+  margin-top: 24px;
+}
+
+/* ---------- The AI, in the focus view's chat ---------- */
+.ai-buddy-wrap {
+  display: none;
+}
+.ai-card-content.is-focus .ai-buddy-wrap {
+  display: flex;
+  align-items: center;
+}
+.ai-card-content.is-focus .ai-buddy-wrap.is-empty {
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+}
+.ai-card-content.is-focus .ai-buddy-wrap.is-chatting {
+  flex: none;
+  gap: 10px;
+}
+.ai-buddy-label {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ai-buddy-wrap.is-empty .ai-buddy-label {
+  display: none;
+}
+
+.ai-buddy {
+  --s: 176px;
+  --gx: 0px;
+  --gy: 0px;
+  --rx: 0deg;
+  --ry: 0deg;
+  --float: 0px;
+  --shadow: 1;
+  --sq: 1;
+  --tilt: 0deg;
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: var(--s);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ai-buddy.is-small {
+  --s: 38px;
+}
+.ai-buddy-body {
+  position: relative;
+  width: var(--s);
+  height: var(--s);
+  transform: translateY(calc(var(--float) + var(--duck))) perspective(600px) rotateX(var(--rx)) rotateY(var(--ry)) rotate(var(--tilt)) scale(var(--sq));
+  transition:
+    --tilt 0.4s,
+    --duck 0.35s cubic-bezier(0.3, 1.4, 0.5, 1);
+  will-change: transform;
+}
+.ai-buddy-shell {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.ai-buddy-halo {
+  opacity: 0.55;
+  transition: opacity 0.4s;
+}
+.ai-buddy.mood-thinking .ai-buddy-halo {
+  animation: ai-buddy-pulse 1.4s ease-in-out infinite;
+}
+
+/* The eyes move a little more than the body, so the face reads as the front of a rounded thing. */
+.ai-buddy-face {
+  position: absolute;
+  top: 52%;
+  left: 50%;
+  display: flex;
+  gap: calc(var(--s) * 0.1);
+  transform: translate(calc(-50% + var(--gx)), calc(-50% + var(--gy)));
+}
+.ai-buddy-eye {
+  display: block;
+  width: calc(var(--s) * 0.125);
+  height: calc(var(--s) * 0.15);
+  border-radius: calc(var(--s) * 0.028);
+  background: #fbf7ff;
+  box-shadow:
+    0 0 calc(var(--s) * 0.06) rgba(255, 255, 255, 0.85),
+    0 0 calc(var(--s) * 0.16) rgba(190, 140, 255, 0.75);
+  transform-origin: 50% 60%;
+  transition:
+    transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1),
+    border-radius 0.28s ease,
+    box-shadow 0.3s ease;
+}
+.ai-buddy.is-small .ai-buddy-eye {
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+}
+/* Moods, read from the eyes. */
+.ai-buddy.mood-happy .ai-buddy-eye {
+  border-radius: 50% 50% 18% 18% / 90% 90% 12% 12%;
+  transform: translateY(-12%) scaleY(0.48);
+}
+.ai-buddy.mood-curious {
+  --tilt: -7deg;
+}
+.ai-buddy.mood-curious .ai-buddy-eye.is-left {
+  transform: scale(1.14);
+}
+.ai-buddy.mood-curious .ai-buddy-eye.is-right {
+  transform: scaleY(0.72);
+}
+.ai-buddy.mood-surprised .ai-buddy-eye {
+  border-radius: 40%;
+  transform: scale(1.28);
+}
+.ai-buddy.mood-sleepy .ai-buddy-eye {
+  transform: translateY(35%) scaleY(0.2);
+  box-shadow: 0 0 calc(var(--s) * 0.04) rgba(255, 255, 255, 0.5);
+}
+.ai-buddy.mood-thinking {
+  --tilt: 5deg;
+}
+.ai-buddy.mood-thinking .ai-buddy-eye {
+  transform: scale(0.88);
+  animation: ai-buddy-glimmer 1.2s ease-in-out infinite;
+}
+.ai-buddy.mood-thinking .ai-buddy-eye.is-right {
+  transform: scale(0.88) scaleY(0.78);
+}
+.ai-buddy.mood-wink .ai-buddy-eye.is-right {
+  transform: scaleY(0.08);
+}
+.ai-buddy.mood-wink .ai-buddy-eye.is-left {
+  border-radius: 50% 50% 18% 18% / 90% 90% 12% 12%;
+  transform: translateY(-12%) scaleY(0.5);
+}
+.ai-buddy.mood-attentive .ai-buddy-eye {
+  transform: scale(1.1);
+}
+.ai-buddy.is-blinking .ai-buddy-eye {
+  transform: scaleY(0.08);
+  transition-duration: 0.08s;
+}
+.ai-buddy-floor {
+  width: calc(var(--s) * 0.62);
+  height: calc(var(--s) * 0.07);
+  margin-top: calc(var(--s) * 0.1);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(160, 110, 255, 0.55), transparent);
+  filter: blur(4px);
+  opacity: calc(0.35 + var(--shadow) * 0.4);
+  transform: scaleX(var(--shadow));
+}
+.ai-buddy.is-small .ai-buddy-floor {
+  display: none;
+}
+@property --tilt {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 0deg;
+}
+@keyframes ai-buddy-hop {
+  0% {
+    translate: 0 0;
+    scale: 1;
+  }
+  18% {
+    translate: 0 4%;
+    scale: 1.1 0.88;
+  }
+  48% {
+    translate: 0 -14%;
+    scale: 0.94 1.08;
+  }
+  78% {
+    translate: 0 2%;
+    scale: 1.05 0.95;
+  }
+  100% {
+    translate: 0 0;
+    scale: 1;
+  }
+}
+@keyframes ai-buddy-pulse {
+  50% {
+    opacity: 0.95;
+  }
+}
+@keyframes ai-buddy-glimmer {
+  50% {
+    box-shadow:
+      0 0 calc(var(--s) * 0.08) rgba(255, 255, 255, 1),
+      0 0 calc(var(--s) * 0.22) rgba(190, 140, 255, 0.95);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-buddy .ai-buddy-react,
+  .ai-buddy.mood-thinking .ai-buddy-eye,
+  .ai-buddy.mood-thinking .ai-buddy-halo {
+    animation: none;
+  }
+}
+
+/* The robot's detail: a soft light behind its eyes, its reactions to clicks, and the copy under it. */
+.ai-buddy-react {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 85%;
+  transition: transform 0.16s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.ai-buddy.is-pressed .ai-buddy-react {
+  transform: translateY(5%) scale(1.09, 0.86);
+  transition-duration: 0.09s;
+}
+.ai-buddy.is-pressed .ai-buddy-eye {
+  transform: scaleY(0.35);
+}
+.ai-buddy-eyeglow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--s) * 0.56);
+  height: calc(var(--s) * 0.34);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(200, 160, 255, 0.42), rgba(140, 110, 255, 0.12) 60%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.ai-buddy-eye {
+  position: relative;
+}
+.ai-buddy-react.is-hop {
+  animation: ai-buddy-hop 0.62s cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+.ai-buddy-react.is-spin {
+  animation: ai-buddy-spin 0.8s cubic-bezier(0.45, 0, 0.2, 1);
+}
+.ai-buddy-react.is-jelly {
+  animation: ai-buddy-jelly 0.7s ease-out;
+}
+.ai-buddy-react.is-giggle {
+  animation: ai-buddy-giggle 0.6s ease-in-out;
+}
+.ai-buddy-react.is-wiggle {
+  animation: ai-buddy-wiggle 0.45s ease-in-out;
+}
+@keyframes ai-buddy-spin {
+  0% {
+    transform: perspective(500px) rotateY(0) translateY(0);
+  }
+  45% {
+    transform: perspective(500px) rotateY(200deg) translateY(-12%);
+  }
+  100% {
+    transform: perspective(500px) rotateY(360deg) translateY(0);
+  }
+}
+@keyframes ai-buddy-jelly {
+  0% {
+    transform: scale(1, 1);
+  }
+  25% {
+    transform: scale(1.14, 0.86);
+  }
+  45% {
+    transform: scale(0.9, 1.1);
+  }
+  65% {
+    transform: scale(1.05, 0.95);
+  }
+  85% {
+    transform: scale(0.98, 1.02);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+@keyframes ai-buddy-giggle {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  15% {
+    transform: rotate(-8deg) translateY(-3%);
+  }
+  35% {
+    transform: rotate(7deg);
+  }
+  55% {
+    transform: rotate(-5deg) translateY(-2%);
+  }
+  75% {
+    transform: rotate(3deg);
+  }
+}
+@keyframes ai-buddy-wiggle {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  30% {
+    transform: rotate(-5deg);
+  }
+  65% {
+    transform: rotate(4deg);
+  }
+}
+/* Little stars that pop out on a click. */
+.ai-buddy-spark {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  width: calc(var(--s) * 0.07);
+  height: calc(var(--s) * 0.07);
+  margin: calc(var(--s) * -0.035);
+  background: hsl(calc(250 + var(--h) * 50) 100% 82%);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  filter: drop-shadow(0 0 4px rgba(200, 160, 255, 0.9));
+  pointer-events: none;
+  animation: ai-buddy-spark 0.75s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+.ai-buddy.is-small .ai-buddy-spark {
+  display: none;
+}
+@keyframes ai-buddy-spark {
+  0% {
+    opacity: 0;
+    transform: rotate(var(--a)) translateY(0) scale(0.2);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--a)) translateY(calc(var(--d) * -1)) scale(1) rotate(90deg);
+  }
+}
+.ai-buddy-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 340px;
+  margin-top: 18px;
+  text-align: center;
+}
+.ai-buddy-title {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+}
+.ai-buddy-hint {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+/* ---------- Comment groups: full width, a quoted head that folds, the newest first ---------- */
+.comments {
+  max-width: none;
+}
+.comment-group-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.cg-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+  color: var(--purple-dark);
+}
+.cg-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cg-title strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.cg-quote {
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  font-size: 13px;
+}
+.cg-count {
+  flex: none;
+  font-size: 12.5px;
+}
+.cg-caret {
+  flex: none;
+  transition: transform 0.2s ease;
+}
+.comment-group.is-folded .cg-caret {
+  transform: rotate(-90deg);
+}
+.comment-group-head:hover .cg-caret,
+.comment-group-head:hover .cg-count {
+  color: var(--ink);
+}
+.comment-group-head:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+.comment-group-open {
+  align-self: flex-start;
+}
+/* The Cancel that now sits beside Send inside the box. */
+.comment-box-foot {
+  gap: 8px;
+}
+.pt-replies-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pt-replies-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.pt-replies-toggle:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.pt-replies-toggle svg {
+  transition: transform 0.2s ease;
+}
+.pt-replies.is-folded .pt-replies-toggle svg {
+  transform: rotate(-90deg);
+}
+
+/* ---------- The AI's shy and oops faces ----------
+   Shy (a password is being typed): eyes squeezed shut as > <, ducked down and
+   turned away, cheeks glowing. Peek (the password is shown): one eye still
+   shut, the other open a crack. Oops (something's missing): worried eyes,
+   the glass flushes pink and it shakes its head. */
+@property --duck {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+.ai-buddy {
+  --duck: 0px;
+}
+.ai-buddy-blush {
+  position: absolute;
+  top: 82%;
+  width: calc(var(--s) * 0.13);
+  height: calc(var(--s) * 0.065);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 110, 190, 0.95), rgba(255, 110, 190, 0));
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.3s,
+    transform 0.35s cubic-bezier(0.3, 1.5, 0.5, 1);
+  pointer-events: none;
+}
+.ai-buddy-blush.is-left {
+  left: -40%;
+}
+.ai-buddy-blush.is-right {
+  right: -40%;
+}
+.ai-buddy.mood-shy,
+.ai-buddy.mood-peek {
+  --duck: calc(var(--s) * 0.05);
+}
+.ai-buddy.mood-shy {
+  --tilt: -13deg;
+}
+.ai-buddy.mood-peek {
+  --tilt: -7deg;
+}
+.ai-buddy.mood-shy .ai-buddy-blush,
+.ai-buddy.mood-peek .ai-buddy-blush {
+  opacity: 1;
+  transform: scale(1);
+  animation: ai-buddy-flush 1.6s ease-in-out infinite;
+}
+/* Squeezed shut: a > and a <. The glow comes from the face, since the clip cuts the eye's own. */
+.ai-buddy.mood-shy .ai-buddy-face,
+.ai-buddy.mood-peek .ai-buddy-face {
+  filter: drop-shadow(0 0 calc(var(--s) * 0.025) rgba(255, 255, 255, 0.9)) drop-shadow(0 0 calc(var(--s) * 0.06) rgba(200, 150, 255, 0.7));
+}
+.ai-buddy.mood-shy .ai-buddy-eye,
+.ai-buddy.mood-peek .ai-buddy-eye.is-left,
+.ai-buddy.mood-shy.is-blinking .ai-buddy-eye,
+.ai-buddy.mood-peek.is-blinking .ai-buddy-eye.is-left {
+  border-radius: 0;
+  box-shadow: none;
+  transform: scale(1.05, 0.9);
+  clip-path: polygon(0 0, 100% 50%, 0 100%, 0 76%, 58% 50%, 0 24%);
+}
+.ai-buddy.mood-shy .ai-buddy-eye.is-right,
+.ai-buddy.mood-shy.is-blinking .ai-buddy-eye.is-right {
+  clip-path: polygon(100% 0, 0 50%, 100% 100%, 100% 76%, 42% 50%, 100% 24%);
+}
+.ai-buddy.mood-peek .ai-buddy-eye.is-right {
+  transform: scale(0.85, 0.5);
+}
+@keyframes ai-buddy-flush {
+  50% {
+    opacity: 0.7;
+    transform: scale(1.12);
+  }
+}
+
+/* Oops: worried eyes, inner ends up, and a pink flush through the glass. */
+.ai-buddy-shell {
+  transition: filter 0.3s;
+}
+.ai-buddy.mood-oops .ai-buddy-shell {
+  filter: hue-rotate(55deg) saturate(1.35);
+}
+.ai-buddy.mood-oops .ai-buddy-eye {
+  background: #ffe6ee;
+  box-shadow:
+    0 0 calc(var(--s) * 0.06) rgba(255, 220, 235, 0.85),
+    0 0 calc(var(--s) * 0.16) rgba(255, 110, 170, 0.75);
+}
+.ai-buddy.mood-oops .ai-buddy-eye.is-left,
+.ai-buddy.mood-oops.is-blinking .ai-buddy-eye.is-left {
+  border-radius: calc(var(--s) * 0.04);
+  transform: translateY(10%) rotate(-18deg) scale(1, 0.5);
+}
+.ai-buddy.mood-oops .ai-buddy-eye.is-right,
+.ai-buddy.mood-oops.is-blinking .ai-buddy-eye.is-right {
+  border-radius: calc(var(--s) * 0.04);
+  transform: translateY(10%) rotate(18deg) scale(1, 0.5);
+}
+.ai-buddy.mood-oops .ai-buddy-eyeglow {
+  background: radial-gradient(closest-side, rgba(255, 140, 190, 0.45), rgba(255, 90, 160, 0.12) 60%, transparent);
+}
+/* A real shake of the head: it turns side to side, not just slides. */
+.ai-buddy-react.is-no {
+  animation: ai-buddy-no 0.75s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes ai-buddy-no {
+  0%,
+  100% {
+    transform: perspective(500px) translateX(0) rotateY(0) rotate(0);
+  }
+  14% {
+    transform: perspective(500px) translateX(-9%) rotateY(-30deg) rotate(-6deg);
+  }
+  32% {
+    transform: perspective(500px) translateX(8%) rotateY(28deg) rotate(5deg);
+  }
+  50% {
+    transform: perspective(500px) translateX(-6%) rotateY(-20deg) rotate(-3deg);
+  }
+  68% {
+    transform: perspective(500px) translateX(4%) rotateY(12deg) rotate(2deg);
+  }
+  84% {
+    transform: perspective(500px) translateX(-1.5%) rotateY(-4deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-buddy.mood-shy .ai-buddy-blush,
+  .ai-buddy.mood-peek .ai-buddy-blush {
+    animation: none;
+  }
+}
+
+/* ---------- Sign in: the AI's speech bubble ---------- */
+.auth-bot {
+  position: relative;
+}
+.auth-art-bot .ai-buddy {
+  --s: 250px;
+}
+.auth-bubble {
+  position: absolute;
+  top: 4%;
+  left: calc(100% - 18px);
+  max-width: 230px;
+  padding: 9px 14px;
+  border: 1px solid #3a3150;
+  border-radius: 16px 16px 16px 4px;
+  background: #221c33;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  width: max-content;
+  opacity: 0;
+  transform: translateY(8px) scale(0.9);
+  transform-origin: 0 100%;
+  transition:
+    opacity 0.2s,
+    transform 0.3s cubic-bezier(0.3, 1.5, 0.5, 1);
+  pointer-events: none;
+}
+.auth-bubble.is-on {
+  opacity: 1;
+  transform: none;
+  animation: auth-bubble-pop 0.32s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@keyframes auth-bubble-pop {
+  from {
+    transform: translateY(8px) scale(0.85);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-bubble.is-on {
+    animation: none;
+  }
+}
+.auth-bubble.is-error {
+  border-color: rgba(255, 122, 150, 0.45);
+}
+
+
+/* ---------- Overview: asset health on top, a column per client ----------
+   Asset health is one uptime bar for the asset picked beside it. The tickets
+   sit in a column per client; a card is the ticket's title and status, and
+   under it who has the ball and the time left. */
+.ovc-health {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 18px;
+  background: var(--fg-glass);
+}
+.ovc-health-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.ovc-health-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+.ovc-health-sum {
+  color: var(--green);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.ovc-health-sum.is-issue {
+  color: var(--orange);
+}
+.ovc-health-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.ovc-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ovc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ovc-state.tone-green,
+.ovc-option-state.tone-green {
+  color: var(--green);
+}
+.ovc-state.tone-orange,
+.ovc-option-state.tone-orange {
+  color: var(--orange);
+}
+.ovc-state.tone-red,
+.ovc-option-state.tone-red {
+  color: var(--red);
+}
+.ovc-state.tone-blue,
+.ovc-option-state.tone-blue {
+  color: var(--blue);
+}
+.ovc-uptime strong {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ovc-day {
+  margin-left: auto;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ovc-bars {
+  display: flex;
+  gap: 3px;
+  height: 26px;
+}
+.ovc-bar {
+  flex: 1;
+  border-radius: 2px;
+  background: #22c08a;
+  transition: opacity 0.12s;
+}
+.ovc-bar.is-partial {
+  background: #f0a04b;
+}
+.ovc-bar.is-down {
+  background: #ff4d74;
+}
+.ovc-bar.is-none {
+  background: var(--border-strong);
+}
+.ovc-bars:hover .ovc-bar:not(:hover) {
+  opacity: 0.45;
+}
+.ovc-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The asset picker: a button, and a searchable list under it. */
+.ovc-picker {
+  position: relative;
+  flex: none;
+  color: var(--ink);
+}
+.ovc-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 280px;
+  padding: 7px 12px 7px 8px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 11px;
+  background: rgba(6, 3, 14, 0.55);
+  font-size: 14px;
+  font-weight: 600;
+}
+.ovc-picker-btn:hover,
+.ovc-picker-btn[aria-expanded='true'] {
+  border-color: var(--purple-line);
+}
+.ovc-picker-client {
+  color: var(--muted);
+  font-weight: 500;
+}
+.ovc-picker-caret {
+  margin-left: auto;
+  color: var(--muted);
+}
+.ovc-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 360px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: #17151e;
+  box-shadow: var(--shadow-pop);
+}
+.ovc-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--page);
+  color: var(--muted);
+}
+.ovc-search:focus-within {
+  border-color: var(--purple);
+}
+.ovc-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.ovc-options {
+  max-height: 280px;
+  margin-top: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.ovc-group {
+  padding: 8px 10px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ovc-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: left;
+}
+.ovc-option:hover,
+.ovc-option.is-on {
+  background: var(--purple-subtle);
+}
+.ovc-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ovc-option-state {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ovc-options-empty {
+  padding: 14px 10px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+/* A column per client; more than two scroll sideways. */
+.ovc-cols {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(520px, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.ovc-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 22px;
+  background: var(--fg-glass);
+}
+.ovc-col-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.ovc-col-title {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+}
+.ovc-col-count {
+  color: var(--muted);
+  font-size: 14px;
+}
+.ovc-col-tags {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.ovc-tag {
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ovc-tag.is-you {
+  background: var(--purple-light);
+  color: var(--purple-dark);
+}
+.ovc-tag.is-blocked {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.ovc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ovc-list.is-open {
+  max-height: 720px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.ovc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--fg-rule);
+  border-radius: 14px;
+  background: var(--fg-table);
+  color: var(--ink);
+  transition: border-color 0.12s;
+}
+.ovc-card:hover {
+  border-color: var(--purple);
+  text-decoration: none;
+}
+.ovc-card:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.ovc-card.is-mine {
+  border-color: rgba(201, 77, 255, 0.55);
+  background: linear-gradient(180deg, rgba(201, 77, 255, 0.13), rgba(201, 77, 255, 0.03)), var(--fg-table);
+}
+.ovc-card.is-blocked {
+  border-color: rgba(255, 92, 128, 0.6);
+  background: linear-gradient(180deg, rgba(232, 18, 74, 0.16), rgba(232, 18, 74, 0.04)), var(--fg-table);
+}
+.ovc-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.ovc-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ovc-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.ovc-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ovc-who-name {
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ovc-card.is-mine .ovc-who-name {
+  color: var(--purple-dark);
+}
+.ovc-who-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ovc-card.is-blocked .ovc-who-step {
+  color: var(--red);
+  font-weight: 600;
+}
+.ovc-time {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ovc-time.is-soon {
+  color: var(--orange);
+}
+.ovc-time.is-late {
+  color: var(--red);
+}
+.ovc-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 12px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.ovc-more:hover {
+  border-color: var(--purple-line);
+  color: var(--ink);
+}
+.ovc-more-caret {
+  transition: transform 0.2s;
+}
+.ovc-more-caret.is-open {
+  transform: rotate(180deg);
+}
+.ovc-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid var(--fg-glass-line);
+  border-radius: 18px;
+  background: var(--fg-glass);
+  color: var(--muted);
+}
+@media (max-width: 760px) {
+  .ovc-health-meta {
+    flex-wrap: wrap;
+  }
+  .ovc-picker-btn {
+    min-width: 0;
+  }
+  .ovc-cols {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
   }
 }

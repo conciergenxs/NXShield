@@ -1,12 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { BadgeCheck, Ban, Clock, FileText, MessageSquareText, Package, Rocket, SearchCheck, Send, ShieldCheck, ThumbsUp, type LucideIcon } from 'lucide-react';
+import { BadgeCheck, Ban, ChevronDown, Clock, FileText, MessageSquareText, Package, Rocket, SearchCheck, Send, ThumbsUp, type LucideIcon } from 'lucide-react';
 import type { CommentOn, Ticket } from '../types';
 import { SEVERITY_LABEL, clientVisibleActivity, portalStatus } from '../lib/domain';
 import { fmtDate, fmtDateTime, fmtDateYear, fmtRelative, fmtTime, fmtWeekday, startOfDay } from '../lib/format';
 import { useStore } from '../store';
 import { Attachments } from '../components/detail';
 import { Avatar, cx } from '../components/ui';
-import { CommentBox, withMentions } from '../components/comments';
+import { CommentBox, CommentThreads, type CommentAuthor } from '../components/comments';
 import { portalText } from './shared';
 import { fullRcaPlan } from '../lib/release';
 
@@ -49,70 +49,67 @@ function expected(ts: number, now: number) {
   return `${fmtWeekday(ts)}, ${fmtDate(ts)}`;
 }
 
-const same = (a: CommentOn | undefined, b: CommentOn) => !!a && a.kind === b.kind && (a.kind === 'rca' || (b.kind === 'release' && a.id === b.id));
+const same = (a: CommentOn | undefined, b: CommentOn) => !!a && a.kind === b.kind && (a.kind !== 'release' || (b.kind === 'release' && a.id === b.id));
 
-/** Replies under one timeline entry, like a thread: who, when, what, then a reply box that opens on demand. */
-/** NXS in a conversation: the company's mark, never a person's face. */
-function NxsMark() {
-  return (
-    <span className="comment-mark" aria-hidden>
-      <ShieldCheck size={14} />
-    </span>
-  );
-}
-
+/** Comments under one timeline entry, threaded like the comments under a video: replies sit under the comment they answer. */
 function Replies({ ticket, userId, on }: { ticket: Ticket; userId: string; on: CommentOn }) {
-  const { addComment, clients, clientOf, now } = useStore();
-  const names = useMemo(() => new Map(clients.flatMap((c) => c.users).map((u) => [u.id, u.name])), [clients]);
+  const { addComment, clients, clientOf, memberOf, now } = useStore();
+  const users = useMemo(() => new Map(clients.flatMap((c) => c.users).map((u) => [u.id, u.name])), [clients]);
   const [open, setOpen] = useState(false);
+  const [folded, setFolded] = useState(false);
   const [text, setText] = useState('');
-  const list = ticket.comments.filter((c) => c.thread === 'client' && same(c.on, on)).sort((x, y) => x.at - y.at);
+  const list = ticket.comments.filter((c) => c.thread === 'client' && same(c.on, on));
   const people = (clientOf(ticket.clientId)?.users ?? []).filter((u) => u.id !== userId).map((u) => ({ id: u.id, name: u.name, title: u.title }));
-  const name = (c: (typeof list)[number]) => (c.by.type === 'client' ? (c.by.id === userId ? 'You' : (names.get(c.by.id) ?? 'Your team')) : 'NXS');
+  // NXS people by name and photo, marked as NXS Support; the client's own people by name, "You" for the reader.
+  const authorOf = (c: (typeof list)[number]): CommentAuthor => {
+    if (c.by.type === 'client') return { name: users.get(c.by.id) ?? 'Your team', tag: c.by.id === userId ? 'You' : undefined };
+    const m = c.by.type === 'team' ? memberOf(c.by.id) : undefined;
+    return m ? { name: m.name, photo: m.photo, tag: 'NXS Support', nxs: true } : { name: 'NXS Support', tag: 'Automatic', nxs: true };
+  };
   const send = () => {
     if (!text.trim()) return;
     addComment(ticket.id, 'client', text, { type: 'client', id: userId }, on);
     setText('');
-    // Sent: the reply joins the thread and the box closes, like posting a reply.
     setOpen(false);
   };
   return (
-    <div className="pt-replies">
-      {list.length > 0 && (
-        <ol className="comment-list is-thread pt-comment-list" aria-label="Comments">
-          {list.map((c) => (
-            <li key={c.id} className={cx('comment', c.by.type !== 'client' && 'is-nxs')}>
-              {c.by.type === 'client' ? <Avatar name={names.get(c.by.id) ?? name(c)} size={28} /> : <NxsMark />}
-              <div className="comment-body">
-                <p className="comment-meta">
-                  <span className="comment-name">{name(c)}</span>
-                  <time title={fmtDateTime(c.at)}>{fmtRelative(c.at, now)}</time>
-                </p>
-                <p className="comment-text">{withMentions(c.text, people.map((p) => p.name))}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-      {open ? (
-        <div className="pt-reply-compose">
-          <CommentBox value={text} onChange={setText} onSend={send} people={people} label="Comment to NXS" placeholder="Write a comment to NXS… Type @ to mention someone on your team." />
-          <button type="button" className="link-btn" onClick={() => setOpen(false)}>
-            Cancel
+    <div className={cx('pt-replies', folded && 'is-folded')}>
+      {/* A new comment goes on top, where the newest ones are; the count folds the thread away when it gets long. */}
+      <div className="pt-replies-bar">
+        {open ? null : (
+          <button type="button" className="pt-reply-open" onClick={() => setOpen(true)}>
+            <MessageSquareText size={15} aria-hidden />
+            {list.length ? 'New comment' : 'Comment'}
           </button>
+        )}
+        {list.length > 0 && (
+          <button type="button" className="pt-replies-toggle" aria-expanded={!folded} onClick={() => setFolded((f) => !f)}>
+            {list.length} {list.length === 1 ? 'comment' : 'comments'}
+            <ChevronDown size={15} aria-hidden />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="pt-reply-compose">
+          <CommentBox value={text} onChange={setText} onSend={send} onCancel={() => setOpen(false)} people={people} label="Comment to NXS" placeholder="Write a comment to NXS… Type @ to mention someone on your team." />
         </div>
-      ) : (
-        <button type="button" className="pt-reply-open" onClick={() => setOpen(true)}>
-          <MessageSquareText size={15} aria-hidden />
-          Comment
-        </button>
+      )}
+      {list.length > 0 && !folded && (
+        <CommentThreads
+          comments={list}
+          authorOf={authorOf}
+          when={(c) => ({ short: fmtRelative(c.at, now), full: fmtDateTime(c.at) })}
+          people={people}
+          replyLabel="Reply"
+          onReply={(t, to) => addComment(ticket.id, 'client', t, { type: 'client', id: userId }, on, to.id)}
+        />
       )}
     </div>
   );
 }
 
 export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string }) {
-  const { slaOf, clients, assetOf, now, memberOf } = useStore();
+  const { slaOf, clients, now, memberOf } = useStore();
   const sla = slaOf(ticket);
   const stage = portalStatus(ticket.status);
   const names = useMemo(() => new Map(clients.flatMap((c) => c.users).map((u) => [u.id, u.name])), [clients]);
@@ -146,17 +143,19 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
       size: 'big',
       state: 'done',
       body: (() => {
-        // Signed like a support reply: the person who sent it, or the NXS team when it went out automatically.
+        // A message, as in a chat: who sent it (the person, or NXS Support when it went out on its own), then what it says.
         const member = reply.by.type === 'team' ? memberOf(reply.by.id) : undefined;
         return (
-          <div className="pt-tl-letter">
-            <blockquote className="pt-tl-quote">{reply.text}</blockquote>
-            <div className="pt-tl-sign">
-              {member ? <Avatar name={member.name} size={28} /> : <NxsMark />}
-              <span className="pt-tl-sign-text">
-                <span className="pt-tl-sign-name">~ {member ? member.name : 'NXS Support Team'}</span>
-                <span className="pt-tl-sign-role">{member ? `${member.title} · NXS` : 'Client Support'}</span>
-              </span>
+          <div className="pt-msg">
+            <Avatar name={member?.name ?? 'NXS Support'} size={32} src={member?.photo} />
+            <div className="pt-msg-body">
+              <p className="ct-meta">
+                <span className="ct-name">{member?.name ?? 'NXS Support'}</span>
+                {member && <span className="ct-tag is-nxs">NXS Support</span>}
+              </p>
+              <p className="pt-msg-text">{reply.text}</p>
+              {/* Sent on its own: signed with NXS Support's initials. */}
+              {!member && <p className="pt-msg-sign">~NS</p>}
             </div>
           </div>
         );
@@ -169,7 +168,7 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
       icon: SearchCheck,
       replies: { kind: 'rca' },
       at: d.at,
-      title: 'Initial analysis (RCA)',
+      title: 'Initial RCA Report',
       meta: `${fmtDateTime(d.at)}${d.at <= sla.initialRca.due ? ' · Within T+3' : ''}`,
       size: 'big',
       state: 'done',
@@ -178,25 +177,25 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
           <dl className="rca-fields rca-form">
             <div>
               <dt>
-                Issue<small>What happens</small>
+                Issue
               </dt>
               <dd>{d.problem ?? ticket.title}</dd>
             </div>
             <div>
               <dt>
-                Cause<small>Why it happens</small>
+                Cause
               </dt>
               <dd>{d.issue}</dd>
             </div>
             <div>
               <dt>
-                How it will be fixed<small>What we’ll do</small>
+                How it will be fixed
               </dt>
               <dd>{d.fix}</dd>
             </div>
             <div>
               <dt>
-                Time to fix<small>Set by the SLA</small>
+                Time to fix
               </dt>
               <dd className="fix-when">
                 <strong>Within {within(sla.resolution.due - ticket.createdAt)}</strong>
@@ -234,7 +233,7 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
         {h.imageTag && (
           <div>
             <dt>
-              Container registry<small>The image that goes live</small>
+              Container registry
             </dt>
             <dd>
               <code className="fix-tag">{h.imageTag}</code>
@@ -244,18 +243,19 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
         {h.note && (
           <div>
             <dt>
-              Release notes<small>Proof it’s fixed</small>
+              Release notes
             </dt>
             <dd>{h.note}</dd>
           </div>
         )}
-        {proof.length > 0 && (
+        {(h.proofNote || proof.length > 0) && (
           <div>
             <dt>
-              Proof<small>From testing</small>
+              Proof
             </dt>
             <dd>
-              <Attachments files={proof} />
+              {h.proofNote && <p className="fs-proof-note">{h.proofNote}</p>}
+              {proof.length > 0 && <Attachments files={proof} />}
             </dd>
           </div>
         )}
@@ -280,7 +280,7 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
       meta: `${by?.actor.type === 'client' ? who(by.actor.id) : 'NXS'} · ${fmtDateTime(ticket.resolvedAt)}`,
       size: 'big',
       state: 'done',
-      body: <p className="pt-tl-text is-muted">{plan.due != null ? `A full RCA report follows. ${plan.why}` : `No full RCA report for this one. ${plan.why}`}</p>,
+      body: <p className="pt-tl-text is-muted">{plan.due != null ? 'A full RCA report follows.' : 'No full RCA report for this one.'}</p>,
     });
   }
   if (ticket.status === 'canceled' && ticket.cancellation)
@@ -288,19 +288,31 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
       key: 'canceled',
       icon: Ban,
       at: ticket.cancellation.at,
-      title: 'Canceled',
-      meta: `NXS · ${fmtDateTime(ticket.cancellation.at)}`,
+      title: ticket.featureCheck?.result?.verdict === 'feature' ? 'Canceled as a feature request' : 'Canceled',
+      meta: fmtDateTime(ticket.cancellation.at),
       size: 'big',
       state: 'done',
-      body: (
-        <>
-          <p className="pt-tl-text">{ticket.cancellation.reason}</p>
-          {ticket.cancellation.proof && <Attachments files={ticket.cancellation.proof} />}
-        </>
-      ),
+      replies: { kind: 'cancel' },
+      // A message from the person who canceled it, with the reason they wrote; the client can comment under it.
+      body: (() => {
+        const c = ticket.cancellation!;
+        const member = c.by.type === 'team' ? memberOf(c.by.id) : undefined;
+        return (
+          <div className="pt-msg">
+            <Avatar name={member?.name ?? 'NXS Support'} size={32} src={member?.photo} />
+            <div className="pt-msg-body">
+              <p className="ct-meta">
+                <span className="ct-name">{member?.name ?? 'NXS Support'}</span>
+                <span className="ct-tag is-nxs">NXS Support</span>
+              </p>
+              <p className="pt-msg-text">{c.reason}</p>
+              {c.proof && c.proof.length > 0 && <Attachments files={c.proof} />}
+            </div>
+          </div>
+        );
+      })(),
     });
 
-  const assetName = assetOf(ticket.assetId)?.name ?? 'your site';
   // What comes next, with when to expect it, so the page never ends on the last thing that happened.
   // When it is the client's turn, that is the top entry, with the button.
   const cadence = ticket.severity === 'critical' ? 'We update you here every hour until then.' : ticket.severity === 'medium' ? 'We update you here every 4 hours until then.' : 'We’ll let you know here when it’s ready.';
@@ -312,13 +324,13 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
   const next: Entry | null =
     stage === 'new'
       ? reply
-        ? { key: 'next', icon: SearchCheck, at: now, title: 'Initial analysis (RCA)', meta: `Expected ${expected(sla.initialRca.due, now)}`, size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">The issue, what’s causing it and how long the fix takes, on this page.</p> }
-        : { key: 'next', icon: MessageSquareText, at: now, title: 'Reply from NXS', meta: `Expected ${expected(sla.firstResponse.due, now)}`, size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">We confirm we’ve got your report, how we’ve rated it and when our analysis follows.</p> }
+        ? { key: 'next', icon: SearchCheck, at: now, title: 'Initial RCA Report', meta: `Expected ${expected(sla.initialRca.due, now)}`, size: 'big', state: 'next' }
+        : { key: 'next', icon: MessageSquareText, at: now, title: 'Reply from NXS', meta: `Expected ${expected(sla.firstResponse.due, now)}`, size: 'big', state: 'next' }
       : stage === 'in_progress'
-        ? { key: 'next', icon: Package, at: now, title: 'Fix ready for you to approve', meta: sla.resolution.due >= now ? `Estimated ${expected(sla.resolution.due, now)}` : 'Taking a little longer than estimated', size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">Tested first, with notes on what we fixed and how we checked it. {cadence}</p> }
+        ? { key: 'next', icon: Package, at: now, title: 'Fix ready for you to approve', meta: sla.resolution.due >= now ? `Estimated ${expected(sla.resolution.due, now)}` : 'Taking a little longer than estimated', size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">{cadence}</p> }
         : stage === 'ready_to_deploy'
           ? approved
-            ? { key: 'next', icon: Rocket, at: now, title: 'NXS is deploying the fix', meta: `You approved it ${fmtDateTime(approved.at)}`, size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">It goes live on {assetName} next. We’ll let you know here when it’s done.</p> }
+            ? { key: 'next', icon: Rocket, at: now, title: 'NXS is deploying the fix', meta: `You approved it ${fmtDateTime(approved.at)}`, size: 'big', state: 'next' }
             : {
                 key: 'next',
                 icon: BadgeCheck,
@@ -332,7 +344,7 @@ export function Timeline({ ticket, userId }: { ticket: Ticket; userId: string })
                 body: <div className="pt-tl-ready">{waiting ? release(waiting) : <p className="pt-tl-text">The fix passed testing.</p>}</div>,
               }
           : rca?.due != null && !rcaSent
-            ? { key: 'next', icon: FileText, at: now, title: 'Full RCA report', meta: `Sent to you on ${fmtDateTime(rca.due)}`, size: 'big', state: 'next', body: <p className="pt-tl-text is-muted">What happened, why, what we did and how we keep it from happening again. It covers everything up to then, in case anything comes back.</p> }
+            ? { key: 'next', icon: FileText, at: now, title: 'Full RCA report', meta: `Sent to you on ${fmtDateTime(rca.due)}`, size: 'big', state: 'next' }
             : null;
 
   const list = [...(next ? [next] : []), ...entries.sort((a, b) => b.at - a.at)];

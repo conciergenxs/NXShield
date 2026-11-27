@@ -24,7 +24,6 @@ export function NewTicket() {
             Back to tickets
           </button>
           <h1 className="portal-form-title">Log ticket for client</h1>
-          <p className="portal-form-desc">For an issue the client reported by call, chat or email. It shows up in their portal too.</p>
         </header>
         <TicketForm
           clients={clients}

@@ -80,7 +80,7 @@ export function RcaEditor({ ticket, onClose }: { ticket: Ticket; onClose: () => 
             <h2 id="rce-title" className="drawer-title">
               Full RCA {edited ? <Badge tone="neutral">Edited</Badge> : <Badge tone="purple">AI draft</Badge>}
             </h2>
-            <p className="drawer-sub">RCA Report - {ticket.id}.xlsx · goes to the client with the fix. Cells in orange are still to confirm.</p>
+            <p className="drawer-sub">RCA Report - {ticket.id}.xlsx</p>
           </div>
           <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
             <X size={18} aria-hidden />

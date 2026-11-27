@@ -8,7 +8,6 @@ import { useStore } from '../store';
 import type { Activity, Ticket } from '../types';
 import { ClientLogo } from '../components/domain';
 import { Toasts } from '../components/Layout';
-import { ThemeSwitch } from '../components/ThemeSwitch';
 import { Avatar, cx, usePopover } from '../components/ui';
 import { TicketScopeContext, portalScope } from '../components/scope';
 import { portalText, usePortalUser } from './shared';
@@ -43,7 +42,7 @@ const NOTIFY: Partial<Record<Activity['kind'], { icon: LucideIcon; tone: string;
   cancellation: { icon: Ban, tone: 'neutral', text: () => 'Canceled by NXS' },
   comment: { icon: MessageSquare, tone: 'purple', text: (a) => a.text.replace(/^Comment: /, 'New comment: ') },
   response: { icon: MessageSquare, tone: 'blue', text: () => 'We replied to your report' },
-  rca: { icon: Search, tone: 'purple', text: () => 'We updated our analysis' },
+  rca: { icon: Search, tone: 'purple', text: (a) => (a.text.startsWith('Updated') ? 'We updated the Initial RCA Report' : 'Your Initial RCA Report is ready') },
 };
 
 function PortalNotifications() {
@@ -151,7 +150,6 @@ function PortalProfile() {
             </div>
           </div>
           <div className="menu-sep" role="separator" />
-          <ThemeSwitch />
           <div className="menu-sep" role="separator" />
           <button type="button" className="menu-item menu-item-signout" onClick={signOut}>
             <LogOut size={16} aria-hidden /> Sign out

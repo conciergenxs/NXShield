@@ -1,5 +1,5 @@
-import { useMemo, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useCallback, useMemo, type ReactNode } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Boxes, Building2, CalendarDays, CircleDot, Clock, Download, LayoutList, Plus, Search, Send, Signal, SquareKanban, Tag, Timer, User, X } from 'lucide-react';
 import type { Category, Severity, Ticket, TicketStatus } from '../types';
 import { CATEGORIES, CATEGORY_LABEL, CHANNEL_LABEL, PORTAL_STATUSES, SEVERITIES, SEVERITY_LABEL, STATUSES, STATUS_LABEL, isOpen, portalStatus, severityRank, NO_PRIORITY_LABEL, TASK_TYPE_LABEL, priorityLabel } from '../lib/domain';
@@ -29,25 +29,14 @@ const SHOW_EXPORT = false;
 
 export type { TicketsView };
 
-const VIEW_DESC: Record<TicketsView, string> = {
-  list: 'Issues raised by clients, across every client and asset.',
-  board: 'Drag a ticket to move it to another stage.',
-  calendar: 'Each open ticket runs from the day it came in to the day it is due.',
-};
-const PORTAL_VIEW_DESC: Record<TicketsView, (client: string) => string> = {
-  list: (client) => `Everything ${client} has raised with NXS. Fixes waiting for your review come first.`,
-  board: () => 'Where each ticket stands right now.',
-  calendar: () => 'Each open ticket runs from the day it came in to the day NXS aims to fix it.',
-};
 
 /** Shared header for the list, board and calendar views of the same tickets. */
 export function TicketsHeader({ view, actions }: { view: TicketsView; actions?: ReactNode }) {
-  const { portal, clientName } = useTicketScope();
+  const { portal } = useTicketScope();
   if (portal) {
     return (
       <PageHeader
         title="Tickets"
-        description={PORTAL_VIEW_DESC[view](clientName ?? 'Your company')}
         actions={
           <Link to="/portal/tickets/new" className="btn btn-primary">
             <Plus size={17} aria-hidden /> New ticket
@@ -59,7 +48,6 @@ export function TicketsHeader({ view, actions }: { view: TicketsView; actions?: 
   return (
     <PageHeader
       title="Tickets"
-      description={VIEW_DESC[view]}
       actions={
         <>
           {actions}
@@ -79,10 +67,18 @@ export function TicketsHeader({ view, actions }: { view: TicketsView; actions?: 
  */
 export function TicketsToolbar({ view, search, onSearch, placeholder, filter, chips }: { view: TicketsView; search: string; onSearch: (q: string) => void; placeholder: string; filter: ReactNode; chips?: ReactNode }) {
   const { viewPath } = useTicketScope();
+  // Switching view keeps the filters and the search: they live in the URL.
+  const { search: query } = useLocation();
+  const carried = (() => {
+    const p = new URLSearchParams(query);
+    for (const k of ['page', 'size', 'sort', 'dir']) p.delete(k);
+    const out = p.toString();
+    return out ? `?${out}` : '';
+  })();
   const tabs = [
     { key: 'list', label: 'List', to: viewPath.list, icon: LayoutList },
     { key: 'board', label: 'Board', to: viewPath.board, icon: SquareKanban },
-    { key: 'calendar', label: 'Calendar', to: viewPath.calendar, icon: CalendarDays },
+    // Calendar is hidden for now; its page is still there, and /tickets/calendar sends you to the list.
   ] as const;
   return (
     <div className="tickets-toolbar-wrap">
@@ -91,7 +87,7 @@ export function TicketsToolbar({ view, search, onSearch, placeholder, filter, ch
           {tabs.map((t) => {
             const Icon = t.icon;
             return (
-              <Link key={t.key} to={t.to} className={cx('view-tab', view === t.key && 'is-active')} aria-current={view === t.key ? 'page' : undefined}>
+              <Link key={t.key} to={`${t.to}${carried}`} className={cx('view-tab', view === t.key && 'is-active')} aria-current={view === t.key ? 'page' : undefined}>
                 <Icon size={16} aria-hidden />
                 <span>
                   {t.label}
@@ -130,107 +126,57 @@ export function useTicketFilters() {
   return { params, get, set, clear: () => setParams(new URLSearchParams(), { replace: true }) };
 }
 
-export function Tickets() {
-  const { clients, assets: allAssets, team, now, slaOf, clientOf, assetOf, memberOf, reporterOf } = useStore();
-  const { portal, clientId } = useTicketScope();
-  const tickets = useScopedTickets();
-  const assets = useMemo(() => (clientId ? allAssets.filter((a) => a.clientId === clientId) : allAssets), [allAssets, clientId]);
-  const { params, get, set, clear } = useTicketFilters();
 
+/** SLA states a filter can pick; the calendar only shows open work, so it leaves out the finished ones. */
+const SLA_FILTER: { value: string; label: string; open: boolean }[] = [
+  { value: 'within', label: SLA_STATE_LABEL.within, open: true },
+  { value: 'at_risk', label: SLA_STATE_LABEL.at_risk, open: true },
+  { value: 'breached', label: SLA_STATE_LABEL.breached, open: true },
+  { value: 'met', label: SLA_STATE_LABEL.met, open: false },
+  { value: 'missed', label: SLA_STATE_LABEL.missed, open: false },
+  { value: 'excluded', label: SLA_STATE_LABEL.excluded, open: true },
+];
+
+/**
+ * The filters every ticket view shares (list, board, calendar), read from and
+ * written to the URL, so a filter set in one view is still on in the next.
+ * One search too: ID, title, client and asset. The list adds Status and a date
+ * range on top; the board's columns already are the status.
+ */
+export function useSharedTicketFilters(view: TicketsView) {
+  const { clients, assets: allAssets, team, slaOf, clientOf, assetOf } = useStore();
+  const { portal, clientId } = useTicketScope();
+  const { params, get, set, clear } = useTicketFilters();
   const q = get('q', '');
   const client = get('client');
   const asset = get('asset');
   const category = get('category');
   const severity = get('severity');
-  const status = get('status');
   const assignee = get('assignee');
   const slaState = get('sla');
-  const response = get('response');
   const source = get('source');
-  const range = get('range');
-  const from = get('from', '');
-  const to = get('to', '');
-  const sort: TicketSort = { key: get('sort', 'created') as TicketColumn, dir: get('dir', 'desc') as 'asc' | 'desc' };
 
+  const assets = useMemo(() => (clientId ? allAssets.filter((a) => a.clientId === clientId) : allAssets), [allAssets, clientId]);
   const assetOptions = useMemo(() => assets.filter((a) => client === 'all' || a.clientId === client), [assets, client]);
 
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    let start: number | null = null;
-    let end: number | null = null;
-    if (range === 'today') start = startOfDay(now);
-    else if (range === 'month') start = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
-    else if (range === 'custom') {
-      start = fromDateInput(from);
-      const e = fromDateInput(to);
-      end = e != null ? e + DAY : null;
-    } else if (range !== 'all') start = startOfDay(now) - (Number(range) - 1) * DAY;
-    // "Resolved this month" style views filter on when the work finished, not when it was reported.
-    const dateOf = (t: Ticket) => (status === 'done' ? t.resolvedAt ?? t.canceledAt ?? t.createdAt : t.createdAt);
-
-    return tickets.filter((t) => {
+  const match = useCallback(
+    (t: Ticket) => {
       if (client !== 'all' && t.clientId !== client) return false;
       if (asset !== 'all' && t.assetId !== asset) return false;
       if (category !== 'all' && t.category !== category) return false;
       if (severity !== 'all' && (t.severity ?? 'none') !== severity) return false;
-      if (status === 'open' ? !isOpen(t) : status === 'done' ? isOpen(t) : status !== 'all' && (portal ? portalStatus(t.status) : t.status) !== status) return false;
       if (assignee === 'unassigned' ? t.assigneeId != null : assignee !== 'all' && t.assigneeId !== assignee) return false;
       if (source === 'portal' ? t.source.channel !== 'portal' : source === 'manual' && t.source.channel === 'portal') return false;
-      if (response === 'awaiting' && (t.firstRespondedAt != null || !isOpen(t))) return false;
-      if (start != null && dateOf(t) < start) return false;
-      if (end != null && dateOf(t) >= end) return false;
       if (slaState !== 'all' && slaOf(t).overall !== slaState) return false;
-      if (term) {
-        const hay = `${t.id} ${t.title} ${clientOf(t.clientId)?.name ?? ''} ${assetOf(t.assetId)?.name ?? ''}`.toLowerCase();
-        if (!hay.includes(term)) return false;
-      }
+      const term = q.trim().toLowerCase();
+      if (term && !`${t.id} ${t.title} ${clientOf(t.clientId)?.name ?? ''} ${assetOf(t.assetId)?.name ?? ''}`.toLowerCase().includes(term)) return false;
       return true;
-    });
-  }, [tickets, q, client, asset, category, severity, status, assignee, response, source, range, from, to, slaState, now, slaOf, clientOf, assetOf, portal]);
-
-  const sorted = useMemo(() => {
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    const text = (a: string, b: string) => a.localeCompare(b);
-    const cmp: Record<TicketColumn, (a: Ticket, b: Ticket) => number> = {
-      id: (a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)),
-      title: (a, b) => text(a.title, b.title),
-      client: (a, b) => text(clientOf(a.clientId)?.name ?? '', clientOf(b.clientId)?.name ?? ''),
-      asset: (a, b) => text(assetOf(a.assetId)?.name ?? '', assetOf(b.assetId)?.name ?? ''),
-      category: (a, b) => text(a.category, b.category),
-      severity: (a, b) => severityRank(a.severity) - severityRank(b.severity),
-      status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status),
-      assignee: (a, b) => text(memberOf(a.assigneeId)?.name ?? 'zzz', memberOf(b.assigneeId)?.name ?? 'zzz'),
-      sla: (a, b) => {
-        const oa = isOpen(a);
-        const ob = isOpen(b);
-        if (oa !== ob) return oa ? -1 : 1;
-        return slaOf(a).active.remainingMs - slaOf(b).active.remainingMs;
-      },
-      reporter: (a, b) => text(reporterOf(a)?.name ?? 'zzz', reporterOf(b)?.name ?? 'zzz'),
-      created: (a, b) => a.createdAt - b.createdAt,
-    };
-    const fn = cmp[sort.key] ?? cmp.created;
-    return [...filtered].sort((a, b) => fn(a, b) * dir || b.createdAt - a.createdAt);
-  }, [filtered, sort.key, sort.dir, clientOf, assetOf, memberOf, reporterOf, slaOf]);
-
-  const activeCount = [...params.keys()].filter((k) => !['sort', 'dir', 'page', 'size'].includes(k)).length;
-
-  const onSort = (key: TicketColumn) => {
-    const firstDir = key === 'created' || key === 'severity' || key === 'id' ? 'desc' : 'asc';
-    set({ sort: key, dir: sort.key === key ? (sort.dir === 'asc' ? 'desc' : 'asc') : firstDir });
-  };
+    },
+    [client, asset, category, severity, assignee, source, slaState, q, slaOf, clientOf, assetOf],
+  );
 
   const all = (label = 'All'): Option => ({ value: 'all', label });
-  const filterFields: FilterField[] = [
-    {
-      key: 'status',
-      label: 'Status',
-      icon: CircleDot,
-      value: status,
-      empty: 'all',
-      options: [all(), { value: 'open', label: 'All open' }, { value: 'done', label: 'Resolved or canceled' }, ...(portal ? PORTAL_STATUSES : STATUSES).map((v: TicketStatus) => ({ value: v as string, label: statusLabelFor(portal, v) }))],
-      onChange: (v) => set({ status: v }),
-    },
+  const fields: FilterField[] = [
     {
       key: 'client',
       label: 'Client',
@@ -239,6 +185,7 @@ export function Tickets() {
       empty: 'all',
       searchable: true,
       options: [all(), ...clients.map((c) => ({ value: c.id, label: c.name }))],
+      // An asset belongs to one client, so a new client clears it.
       onChange: (v) => set({ client: v, asset: null }),
     },
     {
@@ -276,7 +223,7 @@ export function Tickets() {
       value: assignee,
       empty: 'all',
       searchable: true,
-      options: [all('Anyone'), ...team.map((m) => ({ value: m.id, label: m.name }))],
+      options: [all('Anyone'), { value: 'unassigned', label: 'Unassigned' }, ...team.map((m) => ({ value: m.id, label: m.name }))],
       onChange: (v) => set({ assignee: v }),
     },
     {
@@ -285,14 +232,7 @@ export function Tickets() {
       icon: Timer,
       value: slaState,
       empty: 'all',
-      options: [
-        all('Any'),
-        { value: 'within', label: 'Within SLA' },
-        { value: 'at_risk', label: 'Approaching deadline' },
-        { value: 'breached', label: 'Breached' },
-        { value: 'met', label: 'Met' },
-        { value: 'missed', label: 'Missed' },
-      ],
+      options: [all('Any'), ...SLA_FILTER.filter((o) => view !== 'calendar' || o.open).map(({ value, label }) => ({ value, label }))],
       onChange: (v) => set({ sla: v }),
     },
     {
@@ -304,6 +244,97 @@ export function Tickets() {
       options: [all('Any'), { value: 'portal', label: 'Client Portal' }, { value: 'manual', label: 'Logged by NXS' }],
       onChange: (v) => set({ source: v }),
     },
+  ];
+  // A client sees only their own company and doesn't pick NXS staff.
+  const PORTAL_SHARED = ['asset', 'category', 'severity'];
+  const shown = portal ? fields.filter((f) => PORTAL_SHARED.includes(f.key)) : fields;
+
+  /** Clears what this view can show, and the search; filters only another view uses stay put. */
+  const clearShown = () => set(Object.fromEntries([...shown.map((f) => [f.key, null]), ['q', null]]));
+  const hasActive = shown.some((f) => f.value !== f.empty) || q !== '';
+
+  return { q, setQ: (v: string) => set({ q: v }), fields: shown, match, params, get, set, clear, clearShown, hasActive, portal };
+}
+
+export function Tickets() {
+  const { now, clientOf, assetOf, memberOf, reporterOf, slaOf } = useStore();
+  const tickets = useScopedTickets();
+  const shared = useSharedTicketFilters('list');
+  const { q, setQ, match, params, get, set, clear, portal } = shared;
+
+  const status = get('status');
+  const response = get('response');
+  const range = get('range');
+  const from = get('from', '');
+  const to = get('to', '');
+  const sort: TicketSort = { key: get('sort', 'created') as TicketColumn, dir: get('dir', 'desc') as 'asc' | 'desc' };
+
+  const filtered = useMemo(() => {
+    let start: number | null = null;
+    let end: number | null = null;
+    if (range === 'today') start = startOfDay(now);
+    else if (range === 'month') start = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
+    else if (range === 'custom') {
+      start = fromDateInput(from);
+      const e = fromDateInput(to);
+      end = e != null ? e + DAY : null;
+    } else if (range !== 'all') start = startOfDay(now) - (Number(range) - 1) * DAY;
+    // "Resolved this month" style views filter on when the work finished, not when it was reported.
+    const dateOf = (t: Ticket) => (status === 'done' ? (t.resolvedAt ?? t.canceledAt ?? t.createdAt) : t.createdAt);
+
+    return tickets.filter((t) => {
+      if (!match(t)) return false;
+      if (status === 'open' ? !isOpen(t) : status === 'done' ? isOpen(t) : status !== 'all' && (portal ? portalStatus(t.status) : t.status) !== status) return false;
+      if (response === 'awaiting' && (t.firstRespondedAt != null || !isOpen(t))) return false;
+      if (start != null && dateOf(t) < start) return false;
+      if (end != null && dateOf(t) >= end) return false;
+      return true;
+    });
+  }, [tickets, match, status, response, range, from, to, now, portal]);
+
+  const sorted = useMemo(() => {
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const text = (a: string, b: string) => a.localeCompare(b);
+    const cmp: Record<TicketColumn, (a: Ticket, b: Ticket) => number> = {
+      id: (a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)),
+      title: (a, b) => text(a.title, b.title),
+      client: (a, b) => text(clientOf(a.clientId)?.name ?? '', clientOf(b.clientId)?.name ?? ''),
+      asset: (a, b) => text(assetOf(a.assetId)?.name ?? '', assetOf(b.assetId)?.name ?? ''),
+      category: (a, b) => text(a.category, b.category),
+      severity: (a, b) => severityRank(a.severity) - severityRank(b.severity),
+      status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status),
+      assignee: (a, b) => text(memberOf(a.assigneeId)?.name ?? 'zzz', memberOf(b.assigneeId)?.name ?? 'zzz'),
+      sla: (a, b) => {
+        const oa = isOpen(a);
+        const ob = isOpen(b);
+        if (oa !== ob) return oa ? -1 : 1;
+        return slaOf(a).active.remainingMs - slaOf(b).active.remainingMs;
+      },
+      reporter: (a, b) => text(reporterOf(a)?.name ?? 'zzz', reporterOf(b)?.name ?? 'zzz'),
+      created: (a, b) => a.createdAt - b.createdAt,
+    };
+    const fn = cmp[sort.key] ?? cmp.created;
+    return [...filtered].sort((a, b) => fn(a, b) * dir || b.createdAt - a.createdAt);
+  }, [filtered, sort.key, sort.dir, clientOf, assetOf, memberOf, reporterOf, slaOf]);
+
+  const activeCount = [...params.keys()].filter((k) => !['sort', 'dir', 'page', 'size'].includes(k)).length;
+
+  const onSort = (key: TicketColumn) => {
+    const firstDir = key === 'created' || key === 'severity' || key === 'id' ? 'desc' : 'asc';
+    set({ sort: key, dir: sort.key === key ? (sort.dir === 'asc' ? 'desc' : 'asc') : firstDir });
+  };
+
+  const filterFields: FilterField[] = [
+    {
+      key: 'status',
+      label: 'Status',
+      icon: CircleDot,
+      value: status,
+      empty: 'all',
+      options: [{ value: 'all', label: 'All' }, { value: 'open', label: 'All open' }, { value: 'done', label: 'Resolved or canceled' }, ...(portal ? PORTAL_STATUSES : STATUSES).map((v: TicketStatus) => ({ value: v as string, label: statusLabelFor(portal, v) }))],
+      onChange: (v) => set({ status: v }),
+    },
+    ...shared.fields,
     {
       key: 'range',
       label: status === 'done' ? 'Resolved' : 'Created',
@@ -346,9 +377,8 @@ export function Tickets() {
       ]),
     ]);
 
-  // A client filters by what they know: stage, asset, type, priority and date.
-  const PORTAL_FIELDS = ['status', 'asset', 'category', 'severity', 'range'];
-  const filterMenu = useFilterMenu(portal ? filterFields.filter((f) => PORTAL_FIELDS.includes(f.key)) : filterFields);
+  // A client filters by what they know: stage, asset, type, priority and date (the shared hook already left out the rest).
+  const filterMenu = useFilterMenu(filterFields);
 
   return (
     <div className="page">
@@ -367,7 +397,7 @@ export function Tickets() {
         <TicketsToolbar
           view="list"
           search={q}
-          onSearch={(v) => set({ q: v })}
+          onSearch={setQ}
           placeholder={portal ? 'Search ID, title, asset' : 'Search ID, title, client, asset'}
           filter={<FilterButton menu={filterMenu} ariaLabel="Filter tickets" />}
           chips={

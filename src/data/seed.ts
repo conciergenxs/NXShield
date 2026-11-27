@@ -33,6 +33,7 @@ export const departments: Department[] = [
   { id: 'data', name: 'Data & Analytics' },
   { id: 'field', name: 'Field Services' },
   { id: 'accounts', name: 'Account Management' },
+  { id: 'business', name: 'Business' },
 ];
 
 /** NXS, per client: a PM who reviews new tickets, a tester (QA), and a
@@ -47,7 +48,8 @@ export const team: TeamMember[] = [
   { id: 'tm-anton', name: 'Anton Syarif', title: 'Project Manager and QA, Aroma Abadi', role: 'support_lead', level: 'L3', departmentId: 'engineering', email: 'anton.syarif@nxs.example', phone: '+62 811-5550-107', availability: 'available', skills: all },
   { id: 'tm-michael', name: 'Michael Septiadi', title: 'Frontend Developer, Aroma Abadi', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'michael.septiadi@nxs.example', phone: '+62 811-5550-108', availability: 'available', skills: all },
   { id: 'tm-guntur', name: 'Guntur Firmansyah', title: 'Backend Developer, Aroma Abadi', role: 'support_agent', level: 'L2', departmentId: 'engineering', email: 'guntur.firmansyah@nxs.example', phone: '+62 811-5550-109', availability: 'available', skills: all },
-  { id: 'tm-bhisma', name: 'Bhisma Al', title: 'Managing Director', role: 'admin', level: 'L3', departmentId: 'accounts', email: 'bhisma@nxs.example', phone: '+62 811-5550-103', availability: 'available', skills: all },
+  { id: 'tm-bhisma', name: 'Bhisma Al', title: 'Managing Director', role: 'admin', level: 'L3', departmentId: 'business', email: 'bhisma@nxs.example', phone: '+62 811-5550-103', availability: 'available', skills: all },
+  { id: 'tm-adra', name: 'Adra', title: 'Business', role: 'support_lead', level: 'L3', departmentId: 'business', email: 'adra@nxs.example', phone: '+62 811-5550-104', availability: 'available', skills: all },
   { id: 'tm-riyan', name: 'Riyan Hutomo', title: 'Chief Technology Officer', role: 'admin', level: 'L3', departmentId: 'engineering', email: 'riyan@nxs.example', phone: '+62 811-5550-101', availability: 'available', skills: all },
 ];
 
@@ -81,6 +83,8 @@ function users(clientId: string, domain: string, list: [string, string, ClientUs
     name,
     title,
     role,
+    // Each PIC raises tickets for their own category, as their title says.
+    categories: /business|operational/i.test(title) ? ['business', 'operational'] : ['tech'],
     email: `${name.toLowerCase().replace(/[^a-z ]/g, '').split(' ').join('.')}@${domain}`,
     phone: `+62 812-77${String(10 + clientId.length * 7 + i).padStart(2, '0')}-${String(2140 + i * 317 + clientId.charCodeAt(0) * 13).slice(-4)}`,
   }));

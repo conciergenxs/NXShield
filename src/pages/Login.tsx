@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, LoaderCircle, MailCheck } from 'lucide-react';
 import { HOME_PATH, SIGN_IN_PATH, useAuth, type SessionKind } from '../auth';
-import { Button, Field } from '../components/ui';
+import { Button, cx, Field } from '../components/ui';
+import { AiBuddy, type Mood } from '../components/AiBuddy';
 import { useStore } from '../store';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -29,9 +30,50 @@ const COPY: Record<SessionKind, { title: string; sub: string; footer: string; ar
   },
 };
 
-/* ---------- Shell: a framed card on the left, the brand artwork on the right ---------- */
+/** How long the bot's happy hop plays before the app opens. */
+const HOP_MS = 650;
+/** Somewhere up and to the right, away from the form: where the bot looks while you type a password. */
+const AWAY = () => ({ x: window.innerWidth * 1.5, y: -window.innerHeight * 0.4 });
+const measure = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+/** The end of the text in an input, on screen: the bot watches it as you type. */
+function caretOf(input: HTMLInputElement) {
+  const r = input.getBoundingClientRect();
+  const cs = getComputedStyle(input);
+  const pad = parseFloat(cs.paddingLeft) || 0;
+  let w = 0;
+  if (measure) {
+    measure.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    w = measure.measureText(input.value).width;
+  }
+  return { x: r.left + Math.min(pad + w, r.width - pad), y: r.top + r.height / 2 };
+}
 
-function AuthShell({ kind, top, children, footer }: { kind: SessionKind; top: ReactNode; children: ReactNode; footer?: ReactNode }) {
+/** "sarah.alifa@nxs.id" → "Sarah": how the bot greets you. */
+function firstName(email: string) {
+  const part = email.trim().split('@')[0].split(/[._-]/)[0];
+  return part ? part[0].toUpperCase() + part.slice(1) : 'there';
+}
+
+/** The AI beside the form, with a small speech bubble for the moments that need one. */
+function SignInBot({ says, ...bot }: Parameters<typeof AiBuddy>[0] & { says: string | { text: string; error: true } }) {
+  const text = typeof says === 'string' ? says : says.text;
+  const error = typeof says !== 'string';
+  // Keeps the last words while the bubble fades out.
+  const last = useRef(text);
+  if (text) last.current = text;
+  return (
+    <div className="auth-bot">
+      <AiBuddy {...bot} />
+      <span key={last.current} className={cx('auth-bubble', text && 'is-on', error && 'is-error')}>
+        {text || last.current}
+      </span>
+    </div>
+  );
+}
+
+/* ---------- Shell: a framed card on the left, the AI on the art on the right ---------- */
+
+function AuthShell({ kind, top, children, footer, bot }: { kind: SessionKind; top: ReactNode; children: ReactNode; footer?: ReactNode; bot?: ReactNode }) {
   return (
     <div className="auth-page">
       <div className="auth-frame">
@@ -41,6 +83,7 @@ function AuthShell({ kind, top, children, footer }: { kind: SessionKind; top: Re
           {footer && <p className="auth-footer">{footer}</p>}
         </main>
         <aside className="auth-art" aria-hidden>
+          <div className="auth-art-bot">{bot ?? <AiBuddy />}</div>
           <div className="auth-art-copy">
             <p className="auth-art-line">{COPY[kind].artLine}</p>
             <p className="auth-art-by">{COPY[kind].artBy}</p>
@@ -105,6 +148,27 @@ export function Login({ kind = 'team' }: { kind?: SessionKind }) {
   const [busy, setBusy] = useState(false);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
+  // What the bot watches: the email as you type it, and not your password.
+  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
+  const [cue, setCue] = useState<{ kind: 'hop' | 'no'; n: number } | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  // What the bot says: what's missing after a failed try, until you fix it.
+  const [oops, setOops] = useState('');
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const botLook = () =>
+    focused === 'email' && emailRef.current
+      ? caretOf(emailRef.current)
+      : focused === 'password'
+        ? showPassword && passwordRef.current
+          ? caretOf(passwordRef.current)
+          : AWAY()
+        : null;
+  const botMood: Mood | null = focused === 'email' ? 'attentive' : focused === 'password' ? (showPassword ? 'peek' : 'shy') : null;
+  const blurField = () => window.setTimeout(() => {
+    const el = document.activeElement;
+    if (el !== emailRef.current && el !== passwordRef.current) setFocused(null);
+  }, 0);
 
   const home = state?.from ?? HOME_PATH[kind];
   if (session && !busy) return <Navigate to={home} replace />;
@@ -119,38 +183,87 @@ export function Login({ kind = 'team' }: { kind?: SessionKind }) {
     setSubmitted(true);
     if (errors.email || errors.password) {
       document.getElementById(errors.email ? 'login-email' : 'login-password')?.focus();
+      setCue((c) => ({ kind: 'no', n: (c?.n ?? 0) + 1 }));
+      const what = kind === 'team' ? 'work email' : 'email';
+      setOops(
+        !email.trim() && !password
+          ? `I need your ${what} and password.`
+          : !email.trim()
+            ? `I need your ${what}.`
+            : errors.email
+              ? 'That email doesn’t look right.'
+              : 'You forgot your password.',
+      );
       return;
     }
     setBusy(true);
+    setFocused(null);
+    (document.activeElement as HTMLElement | null)?.blur();
     timer.current = window.setTimeout(() => {
-      if (kind === 'client') {
-        // No API: a known client user's email signs in as them; any other
-        // email opens the portal as the first client user, for trying it out.
-        const users = clients.flatMap((c) => c.users);
-        const user = users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase()) ?? users[0];
-        signIn({ email, userId: user?.id });
-      } else {
-        signIn({ email });
-      }
-      navigate(home, { replace: true });
+      // In: the bot hops, then the app opens.
+      setSignedIn(true);
+      setCue((c) => ({ kind: 'hop', n: (c?.n ?? 0) + 1 }));
+      timer.current = window.setTimeout(enter, HOP_MS);
     }, FAKE_LATENCY);
   };
 
+  const enter = () => {
+    if (kind === 'client') {
+      // No API: a known client user's email signs in as them; any other
+      // email opens the portal as the first client user, for trying it out.
+      const users = clients.flatMap((c) => c.users);
+      const user = users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase()) ?? users[0];
+      signIn({ email, userId: user?.id });
+    } else {
+      signIn({ email });
+    }
+    navigate(home, { replace: true });
+  };
+
   return (
-    <AuthShell kind={kind} top={<AuthBrand kind={kind} />} footer={COPY[kind].footer}>
+    <AuthShell
+      kind={kind}
+      top={<AuthBrand kind={kind} />}
+      footer={COPY[kind].footer}
+      bot={
+        <SignInBot
+          busy={busy && !signedIn}
+          lookAt={botLook}
+          hold={busy ? null : botMood}
+          cue={cue}
+          says={
+            signedIn
+              ? `Welcome back, ${firstName(email)}.`
+              : oops
+                ? { text: oops, error: true }
+                : focused === 'password' && !busy
+                  ? showPassword
+                    ? 'Okay, just a peek.'
+                    : 'I’m not looking.'
+                  : ''
+          }
+        />
+      }
+    >
       <h1 className="auth-title">{COPY[kind].title}</h1>
       <p className="auth-sub">{COPY[kind].sub}</p>
       <form className="auth-form" onSubmit={submit} noValidate>
         <Field label={kind === 'team' ? 'Work email' : 'Email'} htmlFor="login-email" error={submitted ? errors.email : ''}>
           <input
             id="login-email"
+            ref={emailRef}
+            onFocus={() => setFocused('email')}
+            onBlur={blurField}
             type="email"
             className="input auth-input"
             autoComplete="username"
             inputMode="email"
             placeholder="name@company.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setOops('');
+            }}
             autoFocus={!email}
             aria-invalid={submitted && !!errors.email}
           />
@@ -167,16 +280,22 @@ export function Login({ kind = 'team' }: { kind?: SessionKind }) {
           <div className="auth-password">
             <input
               id="login-password"
+              ref={passwordRef}
+              onFocus={() => setFocused('password')}
+              onBlur={blurField}
               type={showPassword ? 'text' : 'password'}
               className="input auth-input"
               autoComplete="current-password"
               placeholder="Your password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setOops('');
+              }}
               autoFocus={!!email}
               aria-invalid={submitted && !!errors.password}
             />
-            <button type="button" className="auth-reveal" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>
+            <button type="button" className="auth-reveal" onMouseDown={(e) => e.preventDefault()} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>
               {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>

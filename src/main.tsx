@@ -7,10 +7,10 @@ import './styles.css';
 import { AuthProvider } from './auth';
 import { StoreProvider } from './store';
 import { App } from './App';
-import { applyTheme, readThemePref } from './lib/theme';
+import { applyTheme } from './lib/theme';
 
-// Set the theme before the first paint so there is no flash of the wrong one.
-applyTheme(readThemePref());
+// Dark only for now: the theme switch is hidden, and the light theme stays in the CSS for later.
+applyTheme('dark');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

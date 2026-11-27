@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, Globe, GraduationCap, Inbox, Layers, Plus, Search, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Ban, BarChart3, CircleCheck, Globe, GraduationCap, Inbox, Layers, Plus, Search, type LucideIcon } from 'lucide-react';
 import type { AssetCategory, Ticket, TicketStatus } from '../types';
 import { PORTAL_STATUS_LABEL, portalStatus } from '../lib/domain';
+import { fmtDate, fmtRelative, fmtTime } from '../lib/format';
 import { fullRcaPlan } from '../lib/release';
 import { useStore } from '../store';
-import { Badge, cx, type Tone } from '../components/ui';
+import { Avatar, Badge, cx, type Tone } from '../components/ui';
 import { Dropdown } from '../components/pickers';
 import { STATUS_ICON, STATUS_TONE } from '../components/domain';
 import { usePortalUser } from './shared';
@@ -36,14 +37,40 @@ const PRODUCT_ICON: Record<AssetCategory, { icon: LucideIcon; tone: Tone }> = {
   lms_app: { icon: GraduationCap, tone: 'orange' },
 };
 const DONE_PAGE = 24;
+/** What an empty column says. */
+const EMPTY_COL: Partial<Record<TicketStatus, string>> = {
+  in_progress: 'Nothing being fixed right now.',
+  ready_to_deploy: 'No fixes waiting for your approval.',
+  resolved: 'Nothing deployed yet.',
+  canceled: 'Nothing canceled.',
+};
 
 function greeting(now: number) {
   const h = new Date(now).getHours();
   return h < 11 ? 'Good morning' : h < 15 ? 'Good afternoon' : 'Good evening';
 }
 
+/** How much of the time NXS set is spent, as a ring: it fills as the date nears. Same as the Overview's. */
+function Ring({ used, late }: { used: number; late?: boolean }) {
+  const r = 9;
+  const c = 2 * Math.PI * r;
+  const share = Math.min(1, Math.max(0.04, used));
+  return (
+    <svg className={cx('ovt-ring', late ? 'is-late' : used > 0.85 && 'is-soon')} width="24" height="24" viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r={r} className="ovt-ring-track" />
+      <circle cx="12" cy="12" r={r} className="ovt-ring-fill" strokeDasharray={c} strokeDashoffset={c * (1 - share)} transform="rotate(-90 12 12)" />
+    </svg>
+  );
+}
+
+/**
+ * A ticket as the client sees it: which product and its stage on top, the
+ * title, then who reported it and what comes next. What comes next is the date
+ * NXS is working to (with a ring for how close it is), the approval when a fix
+ * waits on them, or when it went live. The whole card opens the ticket.
+ */
 function TicketCard({ t, meId, inColumn }: { t: Ticket; meId: string; inColumn?: boolean }) {
-  const { assetOf, reporterOf } = useStore();
+  const { assetOf, reporterOf, slaOf, now } = useStore();
   const stage = portalStatus(t.status);
   const asset = assetOf(t.assetId);
   const reporter = reporterOf(t);
@@ -51,34 +78,61 @@ function TicketCard({ t, meId, inColumn }: { t: Ticket; meId: string; inColumn?:
   const product = fresh || !asset ? { icon: Inbox, tone: 'neutral' as Tone } : PRODUCT_ICON[asset.category];
   const Icon = product.icon;
   const ready = stage === 'ready_to_deploy';
+  const StageIcon = STATUS_ICON[stage];
+  const closed = t.resolvedAt ?? t.canceledAt;
+  const sla = slaOf(t);
+  // What they wait for: the Initial RCA Report while it's new, the fix while it's being worked on.
+  const clock = fresh ? sla.initialRca : sla.resolution;
+  const by = (ts: number) => (new Date(ts).toDateString() === new Date(now).toDateString() ? `today, ${fmtTime(ts)}` : fmtDate(ts));
+  const href = `/portal/tickets/${t.id}`;
   return (
-    <li className="pk-card">
-      <div className="pk-card-head">
+    <li className={cx('pk-card', `tone-${STATUS_TONE[stage]}`, ready && 'is-ready')}>
+      {/* One line of context, small; the title is the only thing that's big. */}
+      <div className="pk-card-top">
         <span className={cx('pk-icon', `tone-${product.tone}`)} aria-hidden>
-          <Icon size={17} />
+          <Icon size={15} />
         </span>
-        <div className="pk-card-who">
-          {/* Until NXS confirms it, the asset is only the AI's guess. */}
-          <p className="pk-card-product">{fresh ? 'New report' : (asset?.name ?? '—')}</p>
-          <p className="pk-card-meta">
-            <span className="ticket-id">{t.id}</span>
-          </p>
-        </div>
+        {/* Until NXS confirms it, the asset is only the AI's guess. */}
+        <span className="pk-card-where truncate">{fresh ? 'New report' : (asset?.name ?? '—')}</span>
+        <span className="ticket-id">{t.id}</span>
         {/* In a column the column already says where it stands. */}
         {!inColumn && (
-          <Badge tone={STATUS_TONE[stage]} dot>
+          <Badge tone={STATUS_TONE[stage]} icon={<StageIcon size={13} aria-hidden />}>
             {PORTAL_STATUS_LABEL[stage]}
           </Badge>
         )}
       </div>
-      <div className="pk-card-body">
-        <div className="pk-card-text">
-          <p className="pk-card-title">{t.title}</p>
-          <p className="pk-card-next">Reported by {reporter?.id === meId ? 'you' : (reporter?.name ?? 'your team')}</p>
-        </div>
-        <Link to={`/portal/tickets/${t.id}`} className={cx('btn btn-sm', ready ? 'btn-primary' : 'btn-secondary')}>
-          {ready ? 'Review and approve' : 'View'}
-        </Link>
+      {/* The title is the card's link; it stretches over the whole card. */}
+      <Link to={href} className="pk-card-title">
+        {t.title}
+      </Link>
+      <div className="pk-card-foot">
+        <span className="pk-card-by">
+          <Avatar name={reporter?.name ?? 'Your team'} size={24} />
+          <span className="pk-card-by-text">
+            <span className="pk-card-by-name">{reporter?.id === meId ? 'You' : (reporter?.name.split(' ')[0] ?? 'Your team')}</span>
+            <span className="pk-card-by-when">Reported {fmtRelative(t.createdAt, now).replace(/^J/, 'j')}</span>
+          </span>
+        </span>
+        {ready ? (
+          <Link to={href} className="btn btn-primary btn-sm pk-card-approve">
+            Review and approve
+            <ArrowRight size={15} aria-hidden />
+          </Link>
+        ) : closed != null ? (
+          <span className={cx('pk-card-closed', t.status === 'canceled' && 'is-canceled')}>
+            {t.status === 'canceled' ? <Ban size={15} aria-hidden /> : <CircleCheck size={15} aria-hidden />}
+            {t.status === 'canceled' ? 'Canceled' : 'Deployed'} {fmtRelative(closed, now).replace(/^J/, 'j')}
+          </span>
+        ) : (
+          <span className="ovt-card-due pk-card-due">
+            <Ring used={clock.used} late={clock.state === 'breached'} />
+            <span className="ovt-card-due-text">
+              <strong>{fresh ? 'Initial RCA Report' : 'Fix'} by</strong>
+              <small>{by(clock.due)}</small>
+            </span>
+          </span>
+        )}
       </div>
     </li>
   );
@@ -119,15 +173,15 @@ export function PortalHome() {
   }, [tickets, slaOf, now]);
   if (!user || !client) return null;
 
-  const ready = ongoing.filter((t) => t.status === 'ready_to_deploy').length;
   const term = query.trim().toLowerCase();
   const matches = (t: Ticket) => !term || t.id.toLowerCase().includes(term) || t.title.toLowerCase().includes(term) || (assetOf(t.assetId)?.name.toLowerCase().includes(term) ?? false);
   const mineOnly = (t: Ticket) => who === 'all' || reporterOf(t)?.id === user.id;
-  const newList = fresh.filter(mineOnly);
-  const ongoingList = ongoing.filter(mineOnly);
-  const doneList = done.filter(mineOnly);
-  const list = (tab === 'new' ? newList : tab === 'ongoing' ? ongoingList : doneList).filter(matches);
-  const shown = tab === 'done' ? list.slice(0, doneShown) : list;
+  // The tab counts follow the search and the "who" choice, like the list under them.
+  const newList = fresh.filter(mineOnly).filter(matches);
+  const ongoingList = ongoing.filter(mineOnly).filter(matches);
+  const doneList = done.filter(mineOnly).filter(matches);
+  const list = tab === 'new' ? newList : tab === 'ongoing' ? ongoingList : doneList;
+  const shown = list;
 
   return (
     <div className="page pk-home">
@@ -136,10 +190,6 @@ export function PortalHome() {
           <h1 className="page-title">
             {greeting(now)}, {user.name.split(' ')[0]}
           </h1>
-          <p className="page-desc">
-            {client.name} has {fresh.length + ongoing.length} open {fresh.length + ongoing.length === 1 ? 'ticket' : 'tickets'} with NXS.
-            {ready > 0 && ` ${ready} ${ready === 1 ? 'fix is' : 'fixes are'} ready for you to approve.`}
-          </p>
         </div>
         <Link to="/portal/tickets/new" className="btn btn-primary">
           <Plus size={16} aria-hidden />
@@ -180,19 +230,20 @@ export function PortalHome() {
         </div>
       </div>
 
-      {tab === 'ongoing' && shown.length > 0 ? (
-        // Ongoing as two columns: what NXS is fixing, and what's ready for the client to deploy.
+      {tab !== 'new' && list.length > 0 ? (
+        // Ongoing and Done as two columns each: what NXS is fixing and what's ready to deploy; what went live and what was canceled.
         <div className="pk-kanban">
-          {(['in_progress', 'ready_to_deploy'] as const).map((stage) => {
-            const col = shown.filter((t) => portalStatus(t.status) === stage);
+          {(tab === 'ongoing' ? (['in_progress', 'ready_to_deploy'] as const) : (['resolved', 'canceled'] as const)).map((stage) => {
+            const all = list.filter((t) => portalStatus(t.status) === stage);
+            const col = tab === 'done' ? all.slice(0, doneShown) : all;
             const Icon = STATUS_ICON[stage];
             return (
-              <section key={stage} className={cx('board-col pk-col', `tone-${STATUS_TONE[stage]}`, stage === 'ready_to_deploy' && 'is-ready')} aria-label={`${PORTAL_STATUS_LABEL[stage]}, ${col.length} ${col.length === 1 ? 'ticket' : 'tickets'}`}>
+              <section key={stage} className={cx('board-col pk-col', `tone-${STATUS_TONE[stage]}`, stage === 'ready_to_deploy' && 'is-ready')} aria-label={`${PORTAL_STATUS_LABEL[stage]}, ${all.length} ${all.length === 1 ? 'ticket' : 'tickets'}`}>
                 <header className="board-col-head">
                   <h2>
                     <Icon size={17} aria-hidden className="board-col-icon" />
                     {PORTAL_STATUS_LABEL[stage]}
-                    <span className="board-count">{col.length}</span>
+                    <span className="board-count">{all.length}</span>
                   </h2>
                 </header>
                 {col.length > 0 ? (
@@ -202,7 +253,12 @@ export function PortalHome() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="board-empty pk-col-empty">{stage === 'in_progress' ? 'Nothing being fixed right now.' : 'No fixes waiting for your approval.'}</p>
+                  <p className="board-empty pk-col-empty">{EMPTY_COL[stage]}</p>
+                )}
+                {all.length > col.length && (
+                  <button type="button" className="board-view-all" onClick={() => setDoneShown((n) => n + DONE_PAGE)}>
+                    Show more
+                  </button>
                 )}
               </section>
             );
@@ -228,11 +284,6 @@ export function PortalHome() {
             <TicketCard key={t.id} t={t} meId={user.id} />
           ))}
         </ul>
-      )}
-      {tab === 'done' && list.length > doneShown && (
-        <button type="button" className="btn btn-secondary pk-more" onClick={() => setDoneShown((n) => n + DONE_PAGE)}>
-          Show more
-        </button>
       )}
     </div>
   );

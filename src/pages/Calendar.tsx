@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, ChevronLeft, ChevronRight, Signal, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Ticket } from '../types';
-import { SEVERITIES, SEVERITY_LABEL, isOpen, severityRank, NO_PRIORITY_LABEL } from '../lib/domain';
+import { isOpen, severityRank } from '../lib/domain';
 import { fmtDateTime, fmtDuration, fmtTime, startOfDay } from '../lib/format';
 import { useStore } from '../store';
 import { SLA_TONE, SeverityBadge } from '../components/domain';
 import { Card, cx, usePopover } from '../components/ui';
 import { FilterButton, FilterChips, useFilterMenu } from '../components/FilterMenu';
-import { TicketsHeader, TicketsToolbar } from './Tickets';
+import { TicketsHeader, TicketsToolbar, useSharedTicketFilters } from './Tickets';
 import { useScopedTickets, useTicketScope } from '../components/scope';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -55,16 +55,13 @@ interface Segment {
 }
 
 export function CalendarView() {
-  const { clients, team, now, slaOf, clientOf, assetOf } = useStore();
+  const { now, slaOf, clientOf, assetOf } = useStore();
   const { portal } = useTicketScope();
   const tickets = useScopedTickets();
   // Under each ticket in a day's list: the client for staff, the product for a client.
   const subName = (t: Ticket) => (portal ? assetOf(t.assetId)?.name : clientOf(t.clientId)?.name) ?? '';
   const [month, setMonth] = useState(() => monthStart(now));
-  const [client, setClient] = useState('all');
-  const [assignee, setAssignee] = useState('all');
-  const [severity, setSeverity] = useState('all');
-  const [q, setQ] = useState('');
+  const { q, setQ, fields, match, clearShown, hasActive } = useSharedTicketFilters('calendar');
   const today = startOfDay(now);
 
   // Weeks shown: from the Monday on or before the 1st to the Sunday on or after the last day.
@@ -80,14 +77,9 @@ export function CalendarView() {
   // Open tickets only: the bar runs from creation to the resolution deadline,
   // or on to today when the ticket is already past it.
   const spans = useMemo(() => {
-    const term = q.trim().toLowerCase();
     const out: Span[] = [];
     for (const t of tickets) {
-      if (!isOpen(t)) continue;
-      if (client !== 'all' && t.clientId !== client) continue;
-      if (assignee === 'unassigned' ? t.assigneeId != null : assignee !== 'all' && t.assigneeId !== assignee) continue;
-      if (severity !== 'all' && (t.severity ?? 'none') !== severity) continue;
-      if (term && !`${t.id} ${t.title}`.toLowerCase().includes(term)) continue;
+      if (!isOpen(t) || !match(t)) continue;
       const sla = slaOf(t);
       const due = sla.resolution.due;
       const late = due < now;
@@ -105,31 +97,12 @@ export function CalendarView() {
     // Google Calendar's rule: earliest start first, and on the same start the
     // longer bar first, so long bars get a row and fill the days they cross.
     return out.sort((a, b) => a.start - b.start || b.end - a.end || a.due - b.due || severityRank(b.ticket.severity) - severityRank(a.ticket.severity));
-  }, [tickets, client, assignee, severity, q, now, slaOf]);
+  }, [tickets, match, now, slaOf]);
 
   const monthEnd = shiftMonth(month, 1);
   const inMonth = spans.filter((s) => s.start < monthEnd && s.end >= month).length;
 
-  const fields = [
-    { key: 'client', label: 'Client', icon: Building2, value: client, empty: 'all', searchable: true, options: [{ value: 'all', label: 'All' }, ...clients.map((c) => ({ value: c.id, label: c.name }))], onChange: setClient },
-    {
-      key: 'assignee',
-      label: 'Assigned to',
-      icon: User,
-      value: assignee,
-      empty: 'all',
-      searchable: true,
-      options: [{ value: 'all', label: 'Anyone' }, ...team.map((m) => ({ value: m.id, label: m.name }))],
-      onChange: setAssignee,
-    },
-    { key: 'severity', label: 'Priority', icon: Signal, value: severity, empty: 'all', options: [{ value: 'all', label: 'All' }, ...SEVERITIES.map((v) => ({ value: v as string, label: SEVERITY_LABEL[v] })), { value: 'none', label: NO_PRIORITY_LABEL }], onChange: setSeverity },
-  ];
-  const filterMenu = useFilterMenu(portal ? fields.filter((f) => f.key === 'severity') : fields);
-  const clearFilters = () => {
-    setClient('all');
-    setAssignee('all');
-    setSeverity('all');
-  };
+  const filterMenu = useFilterMenu(fields);
 
   return (
     <div className="page">
@@ -140,9 +113,9 @@ export function CalendarView() {
           view="calendar"
           search={q}
           onSearch={setQ}
-          placeholder="Search ID or title"
+          placeholder={portal ? 'Search ID, title, asset' : 'Search ID, title, client, asset'}
           filter={<FilterButton menu={filterMenu} ariaLabel="Filter calendar" />}
-          chips={<FilterChips menu={filterMenu} onClearAll={filterMenu.active.length ? clearFilters : undefined} />}
+          chips={<FilterChips menu={filterMenu} onClearAll={hasActive ? clearShown : undefined} />}
         />
 
         <div className="cal-bar">

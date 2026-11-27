@@ -69,10 +69,13 @@ export const STATUS_TONE: Record<TicketStatus, Tone> = {
   canceled: 'neutral',
 };
 
+/** A ticket's stage, with its own icon (the same as on the stage bar and the board), so it reads the same everywhere. */
 export function StatusBadge({ status }: { status: TicketStatus }) {
   const { portal } = useTicketScope();
+  const shown = portal ? portalStatus(status) : status;
+  const Icon = STATUS_ICON[shown];
   return (
-    <Badge tone={STATUS_TONE[portal ? portalStatus(status) : status]} dot>
+    <Badge tone={STATUS_TONE[shown]} icon={<Icon size={13} aria-hidden />}>
       {statusLabelFor(portal, status)}
     </Badge>
   );

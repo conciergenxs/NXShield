@@ -75,7 +75,7 @@ export function responseDraftOf(t: Pick<Ticket, 'title' | 'severity'>, assetName
   const title = t.title.trim().replace(/[.!?]+$/, '');
   const rated = t.severity ? ` We’ve rated it ${PRIORITY_NAME[t.severity]}: ${EFFECT[t.severity].charAt(0).toLowerCase()}${EFFECT[t.severity].slice(1)}` : '';
   const cadence = t.severity === 'critical' ? 'While we work on it, we’ll update you every hour.' : t.severity === 'medium' ? 'While we work on it, we’ll update you every 4 hours.' : 'We’ll let you know as soon as it’s fixed.';
-  return `Hi ${firstName}, thanks for reporting this. We’ve received it and are looking into it now: ${title} on ${assetName}.${rated} You’ll get our initial analysis (RCA) by ${fmtDateTime(rcaDue)}, with what’s causing it and how long the fix will take. ${cadence}`;
+  return `Hi ${firstName}, thanks for reporting this. We’ve received it and are looking into it now: ${title} on ${assetName}.${rated} You’ll get our Initial RCA Report by ${fmtDateTime(rcaDue)}, with what’s causing it and how long the fix will take. ${cadence}`;
 }
 
 /** What the full RCA draft needs besides the ticket. */
@@ -123,7 +123,7 @@ export function fullRcaDraftOf(t: Ticket, ctx: RcaContext): FullRcaContent {
 
   const timeline: [string, string, string][] = [[fmtDateTime(t.createdAt), `Issue reported: ${t.title}`, 'Client']];
   if (t.initialResponse) timeline.push([fmtDateTime(t.initialResponse.at), 'Report acknowledged and analysis started', 'NXS support']);
-  if (t.diagnosis) timeline.push([fmtDateTime(t.diagnosis.at), 'Cause found; initial RCA sent and fix started', 'NXS developer']);
+  if (t.diagnosis) timeline.push([fmtDateTime(t.diagnosis.at), 'Cause found; Initial RCA Report sent and fix started', 'NXS developer']);
   for (const a of t.activity) {
     if (a.kind === 'status' && /to Waiting for testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Fix done and handed to testing', 'NXS developer']);
     if (a.kind === 'status' && /to On testing$/.test(a.text)) timeline.push([fmtDateTime(a.at), 'Testing started on staging', 'NXS QA']);

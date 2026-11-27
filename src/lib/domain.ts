@@ -50,11 +50,6 @@ export function sprintChoices(now: number): { code: string; start: number; end: 
   });
 }
 
-export const CATEGORY_HINT: Record<Category, string> = {
-  tech: 'Something in a website, dashboard or app isn’t working, or a phone, laptop or network fault stops you using it.',
-  business: 'A business rule, policy, data definition or requirement needs changing or clarifying.',
-  operational: 'Day-to-day campaign operations, such as one-to-one activities, scheduling or participant handling.',
-};
 /** The categories shown on a new ticket, in this order. */
 export const NEW_TICKET_CATEGORIES: Category[] = CATEGORIES;
 /** Every category can be picked: all three get a priority from the same two questions. */
@@ -176,7 +171,8 @@ export const STATUS_LABEL: Record<TicketStatus, string> = {
   waiting_testing: 'Waiting for testing',
   on_testing: 'On testing',
   // Testing passed; the developer prepares the release (the image and its notes).
-  qa_passed: 'QA passed',
+  // Testing passed and the fix is merged: the developer checks the release (image and notes) and asks the client to approve it.
+  qa_passed: 'Release check',
   // Tested; the client checks it and approves it going live, or says what's still wrong.
   ready_to_deploy: 'Ready to deploy',
   resolved: 'Resolved',
@@ -302,7 +298,7 @@ export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
 };
 /** Why a move can't happen yet, if something it needs is missing. */
 export function moveBlockedBy(t: Pick<Ticket, 'status' | 'diagnosis'>, to: TicketStatus): string | null {
-  if (to === 'waiting_testing' && !t.diagnosis) return 'Send the initial RCA first.';
+  if (to === 'waiting_testing' && !t.diagnosis) return 'Send the Initial RCA Report first.';
   return null;
 }
 export const canTransition = (from: TicketStatus, to: TicketStatus) => TRANSITIONS[from].includes(to);
@@ -329,7 +325,7 @@ export function moveLabel(from: TicketStatus, to: TicketStatus): { title: string
   if (isReopen(from, to)) return { title: 'Reopen', hint: 'Back to the assignee, in progress. Asks why.', ask: 'Why reopen it?' };
   if (to === 'ready_to_deploy') return { title: 'Ready to deploy', hint: 'Testing passed. Sends the client a note to approve it going live.', ask: 'What should the client check?' };
   if (from === 'blocked') return { title: 'Unblock', hint: to === 'in_progress' ? 'Clears the blocker. Work carries on.' : 'Clears the blocker. The fix is ready to test.', ask: '' };
-  if (from === 'on_testing' && to === 'qa_passed') return { title: 'QA passed', hint: 'Testing passed. The developer prepares the release.', ask: '' };
+  if (from === 'on_testing' && to === 'qa_passed') return { title: 'Passed, merge the fix', hint: 'Testing passed. The fix is merged; the developer checks the release and sends it to the client.', ask: '' };
   if (from === 'on_testing') return { title: 'Testing failed', hint: 'Testing failed. Asks what failed.', ask: 'What failed in testing?' };
   if (from === 'qa_passed' && to === 'in_progress') return { title: 'Needs more work', hint: 'Back to the developer before it goes to the client. Asks why.', ask: 'What needs more work?' };
   if (from === 'waiting_testing' && to === 'in_progress') return { title: 'Not ready for testing', hint: 'Not ready to test yet. Asks why.', ask: 'Why isn’t it ready for testing?' };

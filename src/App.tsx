@@ -4,7 +4,7 @@ import { Layout } from './components/Layout';
 import { ForgotPassword, Login } from './pages/Login';
 import { Empty } from './components/ui';
 import { Board } from './pages/Board';
-import { CalendarView } from './pages/Calendar';
+// Hidden for now: import { CalendarView } from './pages/Calendar';
 import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
 import { NewTicket } from './pages/NewTicket';
@@ -54,17 +54,20 @@ export function App() {
         <Route index element={<Overview />} />
         <Route path="tickets" element={<Tickets />} />
         <Route path="tickets/board" element={<Board />} />
-        <Route path="tickets/calendar" element={<CalendarView />} />
+        {/* Calendar is hidden for now. */}
+        <Route path="tickets/calendar" element={<Navigate to="/tickets" replace />} />
         <Route path="tickets/new" element={<NewTicket />} />
         <Route path="tickets/:id" element={<TicketDetail />} />
+        {/* Settings, one module at a time: /settings is the profile. */}
         <Route path="settings" element={<Settings />} />
-        <Route path="settings/workspace" element={<Settings />} />
-        {/* Clients and assets are managed in Settings now. */}
-        <Route path="clients/*" element={<Navigate to="/settings/workspace" replace />} />
-        <Route path="assets/*" element={<Navigate to="/settings/workspace" replace />} />
+        <Route path="settings/workspace" element={<Navigate to="/settings/clients" replace />} />
+        <Route path="settings/:section" element={<Settings />} />
+        <Route path="settings/:section/:id" element={<Settings />} />
         {/* Older addresses from before the navigation was simplified. */}
+        <Route path="clients/*" element={<Navigate to="/settings/clients" replace />} />
+        <Route path="assets/*" element={<Navigate to="/settings/clients" replace />} />
         <Route path="sla" element={<Navigate to="/settings" replace />} />
-        <Route path="team" element={<Navigate to="/settings" replace />} />
+        <Route path="team" element={<Navigate to="/settings/team" replace />} />
         <Route path="reports" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFound />} />
       </Route>

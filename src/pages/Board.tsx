@@ -1,14 +1,15 @@
-import { useMemo, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Ban, Boxes, Building2, ChevronDown, FlaskConical, GripVertical, Hash, Layers, Signal, User } from 'lucide-react';
+import { ArrowRight, Ban, Boxes, ChevronDown, FlaskConical, GripVertical, Hash, Layers, User } from 'lucide-react';
 import type { TaskType, Ticket, TicketStatus } from '../types';
-import { SEVERITIES, SEVERITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL, canTransition, isOpen, severityRank, NO_PRIORITY_LABEL } from '../lib/domain';
+import { NEXT_STAGE, TASK_TYPE_LABEL, canTransition, isOpen, severityRank } from '../lib/domain';
 import { useStore } from '../store';
 import { STATUS_ICON, STATUS_TONE, SeverityBadge, SlaIndicator } from '../components/domain';
 import { PORTAL_ORDER, STAFF_ORDER, groupStatusFor, statusLabelFor, useScopedTickets, useTicketScope } from '../components/scope';
 import { Avatar, Badge, Card, cx, type Tone } from '../components/ui';
 import { FilterButton, FilterChips, useFilterMenu } from '../components/FilterMenu';
-import { TicketsHeader, TicketsToolbar } from './Tickets';
+import { TicketsHeader, TicketsToolbar, useSharedTicketFilters } from './Tickets';
+import { TicketPeek } from './TicketDetail';
 
 const DAY = 24 * 60 * 60_000;
 /** Cards a column shows before “View all”: the board stays a calm overview, like Notion's. */
@@ -21,7 +22,7 @@ const TASK_TONE: Record<TaskType, Tone> = { frontend: 'blue', backend: 'green' }
  * the ID, each with its column
  * icon, and the deadline. Drag the card to move it to another stage.
  */
-function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticket; onDragStart: (e: DragEvent, t: Ticket) => void; onDragEnd: () => void; dragging: boolean }) {
+function BoardCard({ ticket, onDragStart, onDragEnd, dragging, landed, onOpen }: { ticket: Ticket; onDragStart: (e: DragEvent, t: Ticket) => void; onDragEnd: () => void; dragging: boolean; landed?: boolean; onOpen: (id: string) => void }) {
   const { clientOf, assetOf, memberOf, slaOf } = useStore();
   const { portal, ticketPath } = useTicketScope();
   const client = clientOf(ticket.clientId);
@@ -34,17 +35,30 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
   // Only NXS moves tickets between stages; in the portal the cards stay put.
   return (
     <article
-      className={cx('board-card', dragging && 'is-dragging', portal && 'is-static', blocker && 'has-blocker')}
+      className={cx('board-card', dragging && 'is-dragging', portal && 'is-static', blocker && 'has-blocker', landed && 'is-landed')}
       draggable={!portal}
       onDragStart={portal ? undefined : (e) => onDragStart(e, ticket)}
       onDragEnd={portal ? undefined : onDragEnd}
+      // Staff: a click anywhere on the card opens its step beside the board (links inside still work as links).
+      onClick={
+        portal
+          ? undefined
+          : (e) => {
+              if ((e.target as HTMLElement).closest('a, button')) return;
+              onOpen(ticket.id);
+            }
+      }
     >
       <div className="board-card-top">
         {/* The grip says the card can be dragged; the whole card is the drag source. */}
         {!portal && <GripVertical size={16} aria-hidden className="board-grip" />}
-        <Link to={ticketPath(ticket.id)} className="ticket-id">
-          {ticket.id}
-        </Link>
+        {portal ? (
+          <Link to={ticketPath(ticket.id)} className="ticket-id">
+            {ticket.id}
+          </Link>
+        ) : (
+          <span className="ticket-id">{ticket.id}</span>
+        )}
         <span className="board-priority">
           <SeverityBadge severity={ticket.severity} />
         </span>
@@ -56,9 +70,15 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
           <span className="truncate">{blocker.details}</span>
         </p>
       )}
-      <Link to={ticketPath(ticket.id)} className="board-card-title" title={ticket.title}>
-        {ticket.title}
-      </Link>
+      {portal ? (
+        <Link to={ticketPath(ticket.id)} className="board-card-title" title={ticket.title}>
+          {ticket.title}
+        </Link>
+      ) : (
+        <button type="button" className="board-card-title" title={ticket.title} onClick={() => onOpen(ticket.id)}>
+          {ticket.title}
+        </button>
+      )}
       <dl className="board-props">
         <div>
           <dt>
@@ -117,28 +137,26 @@ function BoardCard({ ticket, onDragStart, onDragEnd, dragging }: { ticket: Ticke
 const columnOf = (portal: boolean, s: TicketStatus) => (s === 'blocked' ? 'in_progress' : groupStatusFor(portal, s));
 
 export function Board() {
-  const { clients, team, now, slaOf, changeStatus } = useStore();
+  const { now, slaOf, changeStatus } = useStore();
   const { portal, viewPath } = useTicketScope();
   const tickets = useScopedTickets();
-  const [client, setClient] = useState('all');
-  const [assignee, setAssignee] = useState('all');
-  const [severity, setSeverity] = useState('all');
-  const [q, setQ] = useState('');
+  const { q, setQ, fields, match, clearShown, hasActive, get, set } = useSharedTicketFilters('board');
+  // The ticket open beside the board lives in the address (?peek=), with the stage it was dragged to, if any.
+  const peek = get('peek', '');
+  const intent = get('to', '') as TicketStatus | '';
+  const openPeek = (id: string, to?: TicketStatus) => set({ peek: id, to: to ?? null });
+  const closePeek = useCallback(() => set({ peek: null, to: null }), [set]); // eslint-disable-line react-hooks/exhaustive-deps
   const [drag, setDrag] = useState<{ id: string; from: TicketStatus } | null>(null);
   const [over, setOver] = useState<TicketStatus | null>(null);
   const [expanded, setExpanded] = useState<TicketStatus[]>([]);
+  const [landed, setLanded] = useState<string | null>(null);
 
 
   const columns = useMemo(() => {
-    const term = q.trim().toLowerCase();
     const pool = tickets.filter((t) => {
       // Finished work stays on the board for a week; the list keeps the rest.
       if (!isOpen(t) && (t.canceledAt ?? t.resolvedAt ?? 0) < now - 7 * DAY) return false;
-      if (client !== 'all' && t.clientId !== client) return false;
-      if (assignee === 'unassigned' ? t.assigneeId != null : assignee !== 'all' && t.assigneeId !== assignee) return false;
-      if (severity !== 'all' && (t.severity ?? 'none') !== severity) return false;
-      if (term && !`${t.id} ${t.title}`.toLowerCase().includes(term)) return false;
-      return true;
+      return match(t);
     });
     // Same stage order as the list view, except Blocked: on the board it sits in In progress.
     return (portal ? PORTAL_ORDER : STAFF_ORDER.filter((s) => s !== 'blocked')).map((status) => {
@@ -149,29 +167,16 @@ export function Board() {
       );
       return { status, list };
     });
-  }, [tickets, client, assignee, severity, q, now, slaOf, portal]);
+  }, [tickets, match, now, slaOf, portal]);
 
-  const fields = [
-    { key: 'client', label: 'Client', icon: Building2, value: client, empty: 'all', searchable: true, options: [{ value: 'all', label: 'All' }, ...clients.map((c) => ({ value: c.id, label: c.name }))], onChange: setClient },
-    {
-      key: 'assignee',
-      label: 'Assigned to',
-      icon: User,
-      value: assignee,
-      empty: 'all',
-      searchable: true,
-      options: [{ value: 'all', label: 'Anyone' }, ...team.map((m) => ({ value: m.id, label: m.name }))],
-      onChange: setAssignee,
-    },
-    { key: 'severity', label: 'Priority', icon: Signal, value: severity, empty: 'all', options: [{ value: 'all', label: 'All' }, ...SEVERITIES.map((v) => ({ value: v as string, label: SEVERITY_LABEL[v] })), { value: 'none', label: NO_PRIORITY_LABEL }], onChange: setSeverity },
-  ];
-  // A client sees one brand and doesn't pick NXS staff, so only severity applies.
-  const filterMenu = useFilterMenu(portal ? fields.filter((f) => f.key === 'severity') : fields);
-  const clearFilters = () => {
-    setClient('all');
-    setAssignee('all');
-    setSeverity('all');
-  };
+  const filterMenu = useFilterMenu(fields);
+
+  // A card that landed past the first three of its column: open the column so it shows.
+  useEffect(() => {
+    if (!landed) return;
+    const col = columns.find((c) => c.list.some((t) => t.id === landed));
+    if (col && col.list.findIndex((t) => t.id === landed) >= COLUMN_LIMIT) setExpanded((x) => (x.includes(col.status) ? x : [...x, col.status]));
+  }, [landed, columns]);
 
   const onDragStart = (e: DragEvent, t: Ticket) => {
     e.dataTransfer.setData('text/plain', t.id);
@@ -192,9 +197,9 @@ export function Board() {
           view="board"
           search={q}
           onSearch={setQ}
-          placeholder="Search ID or title"
+          placeholder={portal ? 'Search ID, title, asset' : 'Search ID, title, client, asset'}
           filter={<FilterButton menu={filterMenu} ariaLabel="Filter board" />}
-          chips={<FilterChips menu={filterMenu} onClearAll={filterMenu.active.length ? clearFilters : undefined} />}
+          chips={<FilterChips menu={filterMenu} onClearAll={hasActive ? clearShown : undefined} />}
         />
 
         <div className={cx('board', drag && 'is-dragging')}>
@@ -222,7 +227,18 @@ export function Board() {
                 e.preventDefault();
                 const id = e.dataTransfer.getData('text/plain') || drag?.id;
                 endDrag();
-                if (id && allowed) changeStatus(id, status);
+                if (!id || !allowed) return;
+                // The next stage in the flow is reached by finishing the step, as on the ticket page: open it beside the board.
+                const from = tickets.find((t) => t.id === id)?.status;
+                if (from && NEXT_STAGE[from] === status) {
+                  openPeek(id, status);
+                  return;
+                }
+                if (changeStatus(id, status)) {
+                  // The card lands where you can see it and glows for a moment; its column opens if it fell past the first three (below).
+                  setLanded(id);
+                  window.setTimeout(() => setLanded((l) => (l === id ? null : l)), 1800);
+                }
               }}
             >
               <header className="board-col-head">
@@ -234,7 +250,7 @@ export function Board() {
               </header>
               <div className="board-col-body">
                 {visible.map((t) => (
-                  <BoardCard key={t.id} ticket={t} onDragStart={onDragStart} onDragEnd={endDrag} dragging={drag?.id === t.id} />
+                  <BoardCard key={t.id} ticket={t} onDragStart={onDragStart} onDragEnd={endDrag} dragging={drag?.id === t.id} landed={landed === t.id} onOpen={(id) => openPeek(id)} />
                 ))}
                 {list.length === 0 && <p className="board-empty">{drag && allowed ? 'Drop here' : 'No tickets'}</p>}
                 {list.length > 0 && drag && allowed && <p className="board-empty board-drop">Drop here</p>}
@@ -258,6 +274,7 @@ export function Board() {
         })}
       </div>
       </Card>
+      {peek && !portal && <TicketPeek key={peek} ticketId={peek} intent={intent || undefined} onClose={closePeek} />}
     </div>
   );
 }

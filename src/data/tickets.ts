@@ -1,4 +1,4 @@
-import type {
+import type { FeatureCheck, IssueCheck,
   Activity,
   Actor,
   AssetCategory,
@@ -39,7 +39,7 @@ const testerOf = (d: Pick<Draft, 'clientId'>) => testerFor(clientById.get(d.clie
 /** When QA confirmed the issue and it went to the developer: a little after the PM's review. */
 function qaAt(d: Draft): number | null {
   const rv = d.reviewedAt;
-  if (rv == null || d.status === 'new' || d.status === 'not_started') return null;
+  if (rv == null || d.status === 'new' || d.status === 'not_started' || d.issueCheck || d.featureCheck) return null;
   const end = d.firstResolvedAt ?? d.resolvedAt ?? d.canceledAt ?? NOW;
   return rv + Math.min(20 * MIN, Math.max(2 * MIN, (end - rv) * 0.15));
 }
@@ -77,7 +77,7 @@ interface Draft {
   rcaPending?: boolean;
   security?: boolean;
   recurring?: boolean;
-  /** QA passed it on staging: their release notes, and when. */
+  /** QA passed it on staging: their proof that it works, and when. */
   passed?: { note: string; at: number };
   resolvedAt: number | null;
   /** Set when the ticket was resolved once and later reopened. */
@@ -87,6 +87,10 @@ interface Draft {
   declineNote?: string;
   canceledAt: number | null;
   cancellation: Cancellation | null;
+  /** Who wasn't sure it's an issue, in layers, before the CTO decided. */
+  issueCheck?: IssueCheck;
+  /** Sent to the business team as a possible feature request. */
+  featureCheck?: FeatureCheck;
   reporterId: string;
   channel: TicketChannel;
   attachments: Attachment[];
@@ -94,7 +98,7 @@ interface Draft {
   /** The active blocker, for tickets sitting in Blocked. */
   blocker?: { details: string; at: number };
   /** What NXS sent the client with the fix, for tickets ready to deploy. */
-  handoff?: { note: string; files: Attachment[]; at: number };
+  handoff?: { note: string; files: Attachment[]; proof?: string; at: number };
   comments?: Comment[];
 }
 
@@ -102,6 +106,19 @@ let seq = 0;
 /** Stands in for the release's id in sample replies, until the release exists. */
 const RELEASE = '__release';
 const nextId = (prefix: string) => `${prefix}${++seq}`;
+
+/**
+ * Every report comes with a screen recording of the incident, as the form asks
+ * for one: the report's own videos, or one named after the title. Only videos:
+ * the form takes nothing else.
+ */
+function recordingsOf(d: Pick<Draft, 'title' | 'attachments'>): Attachment[] {
+  const videos = d.attachments.filter((a) => a.kind === 'video');
+  if (videos.length) return videos;
+  const slug = d.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean).slice(0, 4).join('-');
+  const mb = 1.2 + ([...d.title].reduce((n, c) => n + c.charCodeAt(0), 0) % 80) / 10;
+  return [{ id: nextId('att-'), name: `${slug}-recording.mp4`, size: `${mb.toFixed(1)} MB`, kind: 'video' }];
+}
 
 
 function buildActivity(d: Draft): Activity[] {
@@ -146,13 +163,13 @@ function buildActivity(d: Draft): Activity[] {
       push(fr + span * 0.55 + 1000, by, 'progress', stepUpdate('waiting_testing', 'on_testing')!);
     }
     if (d.status === 'qa_passed') {
-      push(fr + span * 0.8, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
+      push(fr + span * 0.8, teamActor(QA), 'status', 'Status changed from On testing to Release check', 'internal');
       push(fr + span * 0.8 + 1000, by, 'progress', stepUpdate('on_testing', 'qa_passed')!);
     }
     // Testing passed: the developer sends the release to the client to approve the deploy.
     if (d.status === 'ready_to_deploy') {
-      push(fr + span * 0.6, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
-      push(fr + span * 0.65, teamActor(d.assigneeId), 'status', 'Status changed from QA passed to Ready to deploy');
+      push(fr + span * 0.6, teamActor(QA), 'status', 'Status changed from On testing to Release check', 'internal');
+      push(fr + span * 0.65, teamActor(d.assigneeId), 'status', 'Status changed from Release check to Ready to deploy');
     }
     if (d.status === 'ready_to_deploy' && d.handoff) push(d.handoff.at, teamActor(d.assigneeId), 'handoff', 'Sent the release to the client to approve the deploy');
   }
@@ -165,8 +182,8 @@ function buildActivity(d: Draft): Activity[] {
     push(sentAt - gap + 1000, teamActor(d.assigneeId), 'progress', stepUpdate('in_progress', 'waiting_testing')!);
     push(sentAt - gap * 0.6, teamActor(d.assigneeId), 'status', 'Status changed from Waiting for testing to On testing', 'internal');
     push(sentAt - gap * 0.6 + 1000, teamActor(d.assigneeId), 'progress', stepUpdate('waiting_testing', 'on_testing')!);
-    push(sentAt - gap * 0.3, teamActor(QA), 'status', 'Status changed from On testing to QA passed', 'internal');
-    push(sentAt, teamActor(d.assigneeId), 'status', 'Status changed from QA passed to Ready to deploy');
+    push(sentAt - gap * 0.3, teamActor(QA), 'status', 'Status changed from On testing to Release check', 'internal');
+    push(sentAt, teamActor(d.assigneeId), 'status', 'Status changed from Release check to Ready to deploy');
     // The client approves the deploy; NXS puts it live, which resolves it.
     if (d.reopenedAt == null) {
       push(firstDone - Math.min(40 * MIN, (firstDone - sentAt) * 0.5), reporter, 'status', `${reporterName(d)} approved the deploy. NXS deploys it next.`);
@@ -176,6 +193,12 @@ function buildActivity(d: Draft): Activity[] {
   if (d.reopenedAt != null) {
     push(d.reopenedAt, reporter, 'status', 'Declined the fix. Status changed from Ready to deploy to In progress');
   }
+  // Not sure it's an issue: up a layer each time, QA to the developer to the CTO.
+  (d.issueCheck?.unsure ?? []).forEach((u, i) => {
+    const to = i === 0 ? memberById.get(d.assigneeId ?? '') : [...memberById.values()].find((m) => /chief technology officer/i.test(m.title));
+    push(u.at, u.by, 'reason', `Not sure it’s an issue, so ${to?.name ?? 'the next person'} checks it. What was checked: ${u.note}`, 'internal');
+  });
+  if (d.featureCheck) push(d.featureCheck.at, d.featureCheck.by, 'reason', 'Marked as a possible feature request and sent to the business team', 'internal');
   if (d.cancellation && d.canceledAt != null) push(d.canceledAt, d.cancellation.by, 'cancellation', `Canceled. Reason: ${d.cancellation.reason}`);
   // Starting work told the client what was wrong and how it would be fixed.
   const found = diagnosisOf(d);
@@ -240,6 +263,8 @@ function finalize(d: Draft, id: string): Ticket {
     resolvedAt: d.resolvedAt,
     canceledAt: d.canceledAt,
     cancellation: d.cancellation,
+    issueCheck: d.issueCheck,
+    featureCheck: d.featureCheck,
     feedback: buildFeedback(d),
     diagnosis: diagnosisOf(d),
     blockers: d.blocker && d.assigneeId
@@ -247,14 +272,13 @@ function finalize(d: Draft, id: string): Ticket {
       : [],
     moveNotes: [],
     handoffs: d.handoff && d.assigneeId ? [releaseOf(d, d.handoff.at, id)] : verifiedFor(d, id),
-    attachments: d.attachments,
+    attachments: recordingsOf(d),
     comments: d.comments ?? [],
     activity,
   };
   if (d.status === 'qa_passed' && d.passed) {
-    const assetName = assetById.get(d.assetId)?.name ?? 'the asset';
     const shot = `${d.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').slice(0, 3).join('-')}-on-staging.png`;
-    ticket.testResult = { at: d.passed.at, by: teamActor(testerOf(d)), note: d.passed.note || releaseNotesOf({ title: d.title, diagnosis: ticket.diagnosis }, assetName, ''), proof: [{ id: nextId('att-'), name: shot, size: '410 KB', kind: 'image' }] };
+    ticket.testResult = { at: d.passed.at, by: teamActor(testerOf(d)), note: d.passed.note || 'Repeated the steps from the report on staging, on desktop and on a phone. It works as it should now.', proof: [{ id: nextId('att-'), name: shot, size: '410 KB', kind: 'image' }] };
   }
   if (d.security) ticket.securityIssue = true;
   if (d.recurring) ticket.recurring = true;
@@ -277,7 +301,9 @@ function releaseOf(d: Draft, at: number, id: string): Ticket['handoffs'][number]
   // QA's proof from staging: a screenshot of it working.
   const shot = `${d.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').slice(0, 4).join('-')}-fixed-on-staging.png`;
   const proof: Attachment[] = d.handoff?.files.length ? d.handoff.files : [{ id: nextId('att-'), name: shot, size: '380 KB', kind: 'image' }];
-  return { id: nextId('hof-'), note: d.handoff?.note || releaseNotesOf(t, assetName, ''), attachments: proof, imageTag: imageTagOf(`nxs-tech/${REPO[assetById.get(d.assetId)?.category ?? 'consumer_website']}`, id, at), by: teamActor(d.assigneeId ?? testerOf(d)), at };
+  // QA's words on what they checked: kept apart from the release notes, which are the AI's.
+  const proofNote = d.handoff?.proof || d.passed?.note || `Repeated the steps from the report on staging, on desktop and on a phone. It works as it should now.`;
+  return { id: nextId('hof-'), note: d.handoff?.note || releaseNotesOf(t, assetName, ''), proofNote, attachments: proof, imageTag: imageTagOf(`nxs-tech/${REPO[assetById.get(d.assetId)?.category ?? 'consumer_website']}`, id, at), by: teamActor(d.assigneeId ?? testerOf(d)), at };
 }
 
 /* ---------- Who reports ---------- */
@@ -292,6 +318,17 @@ function reporterFor(clientId: string, category: Category, n: number): string {
   const pics = PIC_BY_CATEGORY[clientId]?.[category];
   const client = clientById.get(clientId)!;
   return pics ? pics[n % pics.length] : client.users[n % client.users.length].id;
+}
+
+/** Links each reply to the comment it answers (by index), and to that comment's thread. */
+function threaded(list: Comment[], replyTo: (number | undefined)[]): Comment[] {
+  return list.map((c, i) => {
+    const t = replyTo[i];
+    if (t == null || !list[t]) return c;
+    let root = t;
+    while (replyTo[root] != null) root = replyTo[root]!;
+    return { ...c, parentId: list[root].id, replyingTo: list[t].id };
+  });
 }
 
 /* ---------- Active tickets (hand-authored) ---------- */
@@ -322,17 +359,61 @@ interface Spec {
   security?: boolean;
   /** The issue came back after an earlier fix (a P3 then gets a full RCA). */
   recurring?: boolean;
-  /** For tickets in QA passed: the release notes QA wrote. */
+  /** For tickets in QA passed: QA's proof that it works, in their words (the release notes are the AI's). */
   passedNote?: string;
   /** For tickets in Blocked: what is blocking it, and since how many hours ago. */
   blocker?: [details: string, agoH: number];
   /** For tickets ready to deploy: the note sent to the client, and its files. */
-  handoff?: [note: string, files?: [string, string, Attachment['kind']][]];
+  /** The release that went to the client: the release notes (what changed), proof files, and QA's proof note (what they checked). */
+  handoff?: [note: string, files?: [string, string, Attachment['kind']][], proof?: string];
   /** Comments: the thread, who wrote it ('reporter', 'assignee' or a team member id), how many hours ago, and the text. */
-  comments?: [thread: Comment['thread'], who: string, agoH: number, text: string, on?: 'rca' | 'release'][];
+  /** who: 'reporter', 'assignee', a team member id, or a client user id (cu-…). replyTo: the index of the comment it answers. */
+  comments?: [thread: Comment['thread'], who: string, agoH: number, text: string, on?: 'rca' | 'release' | 'cancel', replyTo?: number][];
+  /** Canceled: who did it ('tm-…'), how many hours ago, and the reason the client sees. */
+  cancel?: { by: string; agoH: number; reason: string };
+  /** Canceled by the CTO after the check went up: QA's, then the developer's notes, and how many hours ago. */
+  unsure?: [note: string, agoH: number][];
+  /** Canceled as a feature request: how many hours ago the PM sent it to the business team. */
+  feature?: { sentAgoH: number };
 }
 
 const ACTIVE: Spec[] = [
+  /* Canceled: QA and the developer weren't sure, and the CTO found it isn't an issue. */
+  {
+    title: 'Wishlist count shows 0 after adding items',
+    desc: 'The heart icon in the header shows 0 even after I add products to my wishlist. The wishlist page itself lists them.',
+    asset: 'AST-CML-01', cat: 'tech', sev: 'low', status: 'canceled', agoH: 12, frM: 18, reporter: 1,
+    unsure: [
+      ['Added items on desktop and on a phone; the count went up each time. Couldn’t get it to show 0.', 10],
+      ['The count and the wishlist page read the same API, and both match in the logs for this account. Not sure what the client saw.', 7],
+    ],
+    comments: [
+      ['client', 'reporter', 3.4, 'Ah, that makes sense. One of our tabs was signed in with the shared store account.', 'cancel'],
+      ['client', 'tm-riyan', 3.1, 'No problem. If the count is wrong on a single account, report it again with a screen recording and we’ll pick it up.', 'cancel', 0],
+    ],
+    cancel: {
+      by: 'tm-riyan',
+      agoH: 4,
+      reason: 'Could not be reproduced. The items were saved while signed in with a second account; the count was right for the account that was signed in.',
+    },
+  },
+  /* Canceled as a feature request: the PM sent it to the business team, who confirmed it's new work. */
+  {
+    title: 'ROAS report has no breakdown by campaign objective',
+    desc: 'We need ROAS split by campaign objective (awareness, traffic, conversion). Right now the report only shows one ROAS figure per channel.',
+    asset: 'AST-CML-02', cat: 'business', sev: 'low', status: 'canceled', agoH: 7, frM: 12, reporter: 0,
+    feature: { sentAgoH: 5 },
+    comments: [
+      ['client', 'reporter', 1.6, 'Understood. Can you send the proposal before our Q1 planning on the 28th?', 'cancel'],
+      ['client', 'tm-adra', 1.3, 'Yes. We’ll send it by Thursday, with the effort and a timeline.', 'cancel', 0],
+      ['client', 'cu-cml-5', 1.0, 'Please start with the conversion objective. That’s the one the brand team reviews every week.', 'cancel', 0],
+    ],
+    cancel: {
+      by: 'tm-adra',
+      agoH: 2,
+      reason: 'This is a feature request, not a fault: the report has never split ROAS by campaign objective. Our business team will scope it with you as new work.',
+    },
+  },
   /* CML, Consumer Website */
   {
     title: 'Checkout shows a blank page after choosing bank transfer',
@@ -466,12 +547,15 @@ const ACTIVE: Spec[] = [
     desc: 'TikTok Ads has shown Rp 0 spend since 1 November in Spend by channel, although Ads Manager shows the campaigns running. Meta and Google are correct.',
     asset: 'AST-CML-02', cat: 'tech', sev: 'low', status: 'ready_to_deploy', agoH: 44, frM: 170, reporter: 2,
     files: [['spend-by-channel-zero.png', '310 KB', 'image'], ['tiktok-ads-manager-export.csv', '14 KB', 'doc']],
-    handoff: ['TikTok Ads spend comes through again and has been backfilled from 1 November. We checked it on staging against your Ads Manager export: every day from 1 to 19 November now matches.', [['spend-by-channel-tiktok-fixed.png', '280 KB', 'image'], ['tiktok-backfill-check.mp4', '3.4 MB', 'video']]],
+    handoff: ['TikTok Ads spend comes through again and has been backfilled from 1 November. Approve the deploy and we put it live.', [['spend-by-channel-tiktok-fixed.png', '280 KB', 'image'], ['tiktok-backfill-check.mp4', '3.4 MB', 'video']], 'Checked on staging against your Ads Manager export: every day from 1 to 19 November now matches.'],
     comments: [
       ['client', 'reporter', 9, 'Thanks. Does the backfill also cover the campaigns we paused on 5 November?', 'release'],
-      ['client', 'assignee', 8, 'Yes. Paused campaigns are included; their spend up to the pause date is back in the report.', 'release'],
+      ['client', 'assignee', 8, 'Yes. Paused campaigns are included; their spend up to the pause date is back in the report.', 'release', 0],
+      ['client', 'cu-cml-1', 7.5, 'Good to hear. Did the Meta and Google numbers move with this fix? Finance already closed October on them.', 'release', 1],
+      ['client', 'assignee', 7, 'They didn’t. Only the TikTok rows changed; Meta and Google are exactly as before.', 'release', 2],
       ['client', 'reporter', 6, 'Great. Will the November total in the monthly report update on its own?', 'release'],
-      ['client', 'assignee', 5, 'It will. Once the fix is live the monthly report rebuilds overnight with the corrected numbers.', 'release'],
+      ['client', 'cu-cml-2', 5.5, 'Same question here: we send that report to the brand team on Monday.', 'release', 4],
+      ['client', 'assignee', 5, 'It will. Once the fix is live the monthly report rebuilds overnight with the corrected numbers, well before Monday.', 'release', 4],
       ['client', 'reporter', 20, 'The cause makes sense. Our token was renewed on 31 October, so the timing fits.', 'rca'],
     ],
   },
@@ -480,7 +564,7 @@ const ACTIVE: Spec[] = [
     desc: 'Customers typing a voucher code in lowercase get "Invalid code", while the same code in capitals works. Customer service is getting calls about the 12.12 codes we sent by SMS in lowercase.',
     asset: 'AST-CML-01', cat: 'tech', sev: 'medium', status: 'ready_to_deploy', agoH: 20, frM: 40, reporter: 1,
     files: [['voucher-invalid-lowercase.png', '240 KB', 'image'], ['voucher-checkout-recording.mp4', '5.8 MB', 'video']],
-    handoff: ['Voucher codes are now accepted in any mix of capitals and lowercase, and spaces around the code are ignored. We tried the 12.12 codes from your SMS on staging, on desktop and on a phone, and each one applied its discount.', [['voucher-lowercase-accepted.png', '210 KB', 'image'], ['voucher-fixed-checkout.mp4', '4.1 MB', 'video']]],
+    handoff: ['Voucher codes are now accepted in any mix of capitals and lowercase, and spaces around the code are ignored. Approve the deploy and we put it live.', [['voucher-lowercase-accepted.png', '210 KB', 'image'], ['voucher-fixed-checkout.mp4', '4.1 MB', 'video']], 'Tried the 12.12 codes from your SMS on staging, on desktop and on a phone: each one applied its discount.'],
     comments: [['client', 'reporter', 3, 'Can you confirm codes with a space at the end also work? Some customers copy them from WhatsApp.', 'release']],
   },
 
@@ -613,7 +697,8 @@ function fromSpec(spec: Spec): Draft {
     createdAt,
     // The AI answers the moment it comes in; the PM's review is the first human step.
     firstRespondedAt: createdAt + MIN,
-    reviewedAt: s.frM != null && s.status !== 'new' ? createdAt + s.frM * MIN : null,
+    // A feature request was canceled while New, before the PM's review.
+    reviewedAt: s.frM != null && s.status !== 'new' && !s.feature ? createdAt + s.frM * MIN : null,
     rcaPending: s.rcaPending,
     security: s.security,
     recurring: s.recurring,
@@ -622,29 +707,51 @@ function fromSpec(spec: Spec): Draft {
     firstResolvedAt: reopened ? resolvedOnce ?? undefined : undefined,
     reopenedAt: reopened ? NOW - s.reopenedAgoH! * HOUR : undefined,
     declineNote: reopened ? s.declineNote : undefined,
-    canceledAt: null,
-    cancellation: null,
+    canceledAt: s.cancel ? NOW - s.cancel.agoH * HOUR : null,
+    cancellation: s.cancel ? { by: teamActor(s.cancel.by), reason: s.cancel.reason, at: NOW - s.cancel.agoH * HOUR } : null,
+    issueCheck: s.unsure
+      ? {
+          unsure: s.unsure.map(([note, agoH], i) => ({
+            by: teamActor(i === 0 ? testerFor(client) : routeTo(client, taskTypeFor(s.title, s.desc, s.cat))),
+            at: NOW - agoH * HOUR,
+            note,
+            proof: [],
+          })),
+        }
+      : undefined,
+    featureCheck:
+      s.feature && s.cancel
+        ? {
+            by: teamActor(pmFor(client)),
+            at: NOW - s.feature.sentAgoH * HOUR,
+            result: { verdict: 'feature', by: teamActor(s.cancel.by), at: NOW - s.cancel.agoH * HOUR, reason: s.cancel.reason },
+          }
+        : undefined,
     reporterId: reporterFor(client.id, s.cat, s.reporter),
     channel: s.via ?? 'portal',
     attachments: (s.files ?? []).map(([name, size, kind]) => ({ id: nextId('att-'), name, size, kind })),
     triageBy: pmFor(client),
     blocker: s.blocker ? { details: s.blocker[0], at: NOW - s.blocker[1] * HOUR } : undefined,
-    comments: (s.comments ?? []).map(([thread, who, agoH, text, on], i) => ({
-      id: nextId('cmt-'),
-      thread,
-      // A client-thread comment is a reply on the client's timeline: under the initial RCA, or under the fix.
-      ...(thread === 'client' ? { on: on === 'release' ? ({ kind: 'release', id: RELEASE } as const) : ({ kind: 'rca' } as const) } : {}),
-      by: who === 'reporter' ? clientActor(reporterFor(client.id, s.cat, s.reporter)) : teamActor(who === 'assignee' ? routeTo(client, taskTypeFor(s.title, s.desc, s.cat)) : who),
-      // Never before the ticket came in, and in the order written.
-      at: Math.max(createdAt + (10 + i) * MIN, NOW - agoH * HOUR),
-      text,
-    })),
+    comments: threaded(
+      (s.comments ?? []).map(([thread, who, agoH, text, on], i) => ({
+        id: nextId('cmt-'),
+        thread,
+        // A client-thread comment is a reply on the client's timeline: under the initial RCA, or under the fix.
+        ...(thread === 'client' ? { on: on === 'release' ? ({ kind: 'release', id: RELEASE } as const) : on === 'cancel' ? ({ kind: 'cancel' } as const) : ({ kind: 'rca' } as const) } : {}),
+        by: who === 'reporter' ? clientActor(reporterFor(client.id, s.cat, s.reporter)) : who.startsWith('cu-') ? clientActor(who) : teamActor(who === 'assignee' ? routeTo(client, taskTypeFor(s.title, s.desc, s.cat)) : who),
+        // Never before the ticket came in, and in the order written.
+        at: Math.max(createdAt + (10 + i) * MIN, NOW - agoH * HOUR),
+        text,
+      })),
+      (s.comments ?? []).map((c) => c[5]),
+    ),
     // Sent at the same moment the status moved, as buildActivity places it.
     handoff:
       s.handoff && s.frM != null
         ? {
             note: s.handoff[0],
             files: (s.handoff[1] ?? []).map(([name, size, kind]) => ({ id: nextId('att-'), name, size, kind })),
+            proof: s.handoff[2],
             at: createdAt + s.frM * MIN + Math.max(NOW - (createdAt + s.frM * MIN), 4 * MIN) * 0.65 + 1000,
           }
         : undefined,

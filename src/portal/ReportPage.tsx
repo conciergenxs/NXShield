@@ -178,7 +178,6 @@ export function ReportPage() {
 
         <Section n={7} title="Corrective and Preventive Actions">
           <Table head={['#', 'Action', 'Type', 'Owner', 'Due', 'Status']} rows={c.actions.map((a, i) => [String(i + 1), a.action, a.type, a.owner, a.due, a.status])} tight={[0, 2, 3, 4, 5]} />
-          <p className="report-note">Corrective fixes the issue now. Preventive stops it coming back. Detective spots it sooner. Process changes how the work is done.</p>
         </Section>
 
         <Section n={8} title="Lessons Learned">

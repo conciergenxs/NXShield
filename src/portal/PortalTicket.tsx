@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowUp, Ban, Rocket, Boxes, CalendarCheck, CalendarDays, CircleCheck, CircleUser, Layers, Signal, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Rocket, Boxes, CalendarCheck, CalendarDays, CircleCheck, CircleUser, Signal, X } from 'lucide-react';
 import type { Ticket, TicketStatus } from '../types';
-import { PORTAL_STATUS_LABEL, TASK_TYPE_LABEL, portalStatus } from '../lib/domain';
+import { PORTAL_STATUS_LABEL, portalStatus } from '../lib/domain';
 import { fmtDate, fmtDateTime, fmtDuration, fmtRelative, fmtTime, fmtWeekday } from '../lib/format';
 import { useStore } from '../store';
 import { Prop } from '../components/detail';
 import { STATUS_ICON, STATUS_TONE, SeverityBadge } from '../components/domain';
-import { Avatar, Badge, Button, Card, Empty, cx } from '../components/ui';
+import { Avatar, Button, Card, Empty, cx } from '../components/ui';
 import { usePortalUser } from './shared';
 import { CLIENT_STARTERS, clientAnswer } from './assistant';
 import { Timeline } from './Timeline';
@@ -22,7 +22,6 @@ import { Timeline } from './Timeline';
  */
 
 const PATH: TicketStatus[] = ['new', 'in_progress', 'ready_to_deploy', 'resolved'];
-const TASK_TONE = { frontend: 'blue', backend: 'green' } as const;
 
 /** When the ticket first reached each step the client sees. */
 function reachedAt(t: Ticket, step: TicketStatus): number | undefined {
@@ -108,7 +107,7 @@ function PortalAside({ ticket, userId, onAsk }: { ticket: Ticket; userId: string
         <dl className="props is-rows is-head">
           {/* Like a delivery estimate: when to expect it, not a countdown. NXS keeps the clock. */}
           {running && (
-            <Prop icon={CalendarCheck} label={stage === 'new' ? (replied ? 'Analysis expected' : 'Reply expected') : 'Estimated fix'}>
+            <Prop icon={CalendarCheck} label={stage === 'new' ? (replied ? 'Initial RCA Report' : 'Reply expected') : 'Estimated fix'}>
               {clock.due >= now ? <Eta ts={clock.due} note={around(clock.due)} /> : <Eta note="We’re still on it." tone="orange" />}
             </Prop>
           )}
@@ -133,7 +132,7 @@ function PortalAside({ ticket, userId, onAsk }: { ticket: Ticket; userId: string
             '—'
           )}
         </Prop>
-        {/* Asset, priority and task type are set when NXS confirms the report; until then they aren't shown. */}
+        {/* Asset and priority are set when NXS confirms the report; until then they aren't shown. How NXS splits the work (task type) is internal. */}
         {confirmed && (
           <>
             <Prop icon={Boxes} label="Asset" title={asset?.name}>
@@ -141,9 +140,6 @@ function PortalAside({ ticket, userId, onAsk }: { ticket: Ticket; userId: string
             </Prop>
             <Prop icon={Signal} label="Priority">
               <SeverityBadge severity={ticket.severity} />
-            </Prop>
-            <Prop icon={Layers} label="Task type">
-              {ticket.plan?.taskType ? <Badge tone={TASK_TONE[ticket.plan.taskType]}>{TASK_TYPE_LABEL[ticket.plan.taskType]}</Badge> : <span className="muted">Not set</span>}
             </Prop>
           </>
         )}
@@ -180,7 +176,7 @@ function AskDrawer({ ticket, onClose }: { ticket: Ticket; onClose: () => void })
             <h2 id="pt-ask-title" className="drawer-title">
               Ask AI
             </h2>
-            <p className="drawer-sub">About {ticket.id}. Answers come from the RCA and the latest updates.</p>
+            <p className="drawer-sub">About {ticket.id}</p>
           </div>
           <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
             <X size={18} aria-hidden />
@@ -248,10 +244,28 @@ function AskDrawer({ ticket, onClose }: { ticket: Ticket; onClose: () => void })
 
 export function PortalTicket() {
   const { id } = useParams();
-  const { reviewFix, toast, now } = useStore();
+  const { reviewFix, toast } = useStore();
   const { user, tickets } = usePortalUser();
   const ticket = tickets.find((t) => t.id === id);
   const [asking, setAsking] = useState(false);
+  // Something new on the timeline while they watch (their approval, a release, a reply): back to the top, and the newest entry slides in.
+  const pulse = ticket ? `${ticket.id}|${ticket.status}|${ticket.feedback.length}|${ticket.handoffs.length}|${ticket.comments.length}` : '';
+  const lastPulse = useRef(pulse);
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    const prev = lastPulse.current;
+    lastPulse.current = pulse;
+    if (!prev || prev === pulse || prev.split('|')[0] !== pulse.split('|')[0]) return;
+    // A comment of their own stays where they wrote it; only a change of stage or a release moves the page.
+    const [, s1, f1, h1] = prev.split('|');
+    const [, s2, f2, h2] = pulse.split('|');
+    if (s1 === s2 && f1 === f2 && h1 === h2) return;
+    setFresh(true);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+    const t = window.setTimeout(() => setFresh(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [pulse]);
 
   if (!user) return null;
   if (!ticket) {
@@ -312,21 +326,12 @@ export function PortalTicket() {
           )}
         </header>
         <Stages ticket={ticket} />
-        {stage === 'canceled' && ticket.cancellation && (
-          <div className={cx('tdl-banner', 'tone-neutral')}>
-            <Ban size={17} aria-hidden className="tdl-banner-icon" />
-            <div className="tdl-banner-body">
-              <p>
-                <strong>Canceled.</strong> {ticket.cancellation.reason}
-              </p>
-              <p className="tdl-banner-meta">NXS, {fmtRelative(ticket.cancellation.at, now).toLowerCase()}</p>
-            </div>
-          </div>
-        )}
 
         <div className="ticket-body">
           <div className="ticket-main">
-            <Timeline ticket={ticket} userId={user.id} />
+            <div className={cx('pt-tl-wrap', fresh && 'is-fresh')}>
+              <Timeline ticket={ticket} userId={user.id} />
+            </div>
           </div>
           <PortalAside ticket={ticket} userId={user.id} onAsk={() => setAsking(true)} />
         </div>

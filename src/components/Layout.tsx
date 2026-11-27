@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, ArrowRightLeft, AtSign, Bell, Boxes, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, LayoutDashboard, LogOut, Search, Settings, Ticket as TicketIcon, TriangleAlert, UserPlus, X } from 'lucide-react';
+import { Activity, ArrowRightLeft, AtSign, Bell, Boxes, Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Info, LayoutDashboard, LogOut, Search, Settings, Ticket as TicketIcon, TriangleAlert, UserPlus, X } from 'lucide-react';
 import type { NotificationEventType } from '../types';
 import { fmtRelative } from '../lib/format';
 import { useAuth } from '../auth';
 import { useStore } from '../store';
 import { ClientLogo, StatusBadge } from './domain';
 import { Dialogs } from './dialogs';
-import { ThemeSwitch } from './ThemeSwitch';
 import { Avatar, cx, usePopover } from './ui';
 
 /* ---------- Brand ---------- */
@@ -163,7 +162,7 @@ function GlobalSearch() {
             <div className="search-group">
               <p className="search-heading">Clients</p>
               {results.clients.map((c) => (
-                <button key={c.id} type="button" className="search-row" onClick={() => go('/settings/workspace')}>
+                <button key={c.id} type="button" className="search-row" onClick={() => go(`/settings/clients/${c.id}`)}>
                   <ClientLogo client={c} size={24} />
                   <span className="truncate search-main">{c.name}</span>
                   <span className="muted">{c.industry}</span>
@@ -175,7 +174,7 @@ function GlobalSearch() {
             <div className="search-group">
               <p className="search-heading">Assets</p>
               {results.assets.map((a) => (
-                <button key={a.id} type="button" className="search-row" onClick={() => go('/settings/workspace')}>
+                <button key={a.id} type="button" className="search-row" onClick={() => go(`/settings/clients/${a.clientId}`)}>
                   <Boxes size={16} aria-hidden className="muted" />
                   <span className="truncate search-main">{a.name}</span>
                   <span className="muted">{clientOf(a.clientId)?.name}</span>
@@ -335,7 +334,6 @@ function ProfileMenu() {
           <Link to="/settings" className="menu-item" onClick={() => setOpen(false)}>
             <Settings size={16} aria-hidden /> Settings
           </Link>
-          <ThemeSwitch />
           <div className="menu-sep" role="separator" />
           <button type="button" className="menu-item menu-item-signout" onClick={signOut}>
             <LogOut size={16} aria-hidden /> Sign out
@@ -348,24 +346,37 @@ function ProfileMenu() {
 
 /* ---------- Toasts ---------- */
 
+const TOAST_ICON = { success: CircleCheck, error: CircleX, warning: TriangleAlert, info: Info } as const;
+
+/**
+ * Short messages in the top-right corner, newest on top: green for something
+ * done, red for something that failed, amber for something to look at, blue
+ * for a change to know about. A "View" link to the page you're on is left off.
+ */
 export function Toasts() {
   const { toasts, dismissToast } = useStore();
+  const { pathname } = useLocation();
   return (
-    <div className="toasts" role="status" aria-live="polite">
-      {toasts.map((t) => (
-        <div key={t.id} className={cx('toast', t.tone === 'error' && 'toast-error')}>
-          {t.tone === 'error' ? <TriangleAlert size={16} aria-hidden /> : <CircleCheck size={16} aria-hidden />}
-          <span>{t.message}</span>
-          {t.link && (
-            <Link to={t.link.to} onClick={() => dismissToast(t.id)}>
-              {t.link.label}
-            </Link>
-          )}
-          <button type="button" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>
-            <X size={15} />
-          </button>
-        </div>
-      ))}
+    <div className="toasts" aria-live="polite">
+      {[...toasts].reverse().map((t) => {
+        const Icon = TOAST_ICON[t.tone];
+        return (
+          <div key={t.id} className={cx('toast', `is-${t.tone}`)} role={t.tone === 'error' || t.tone === 'warning' ? 'alert' : 'status'}>
+            <span className="toast-icon" aria-hidden>
+              <Icon size={16} />
+            </span>
+            <span className="toast-text">{t.message}</span>
+            {t.link && t.link.to !== pathname && (
+              <Link className="toast-link" to={t.link.to} onClick={() => dismissToast(t.id)}>
+                {t.link.label}
+              </Link>
+            )}
+            <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>
+              <X size={15} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
